@@ -12,10 +12,10 @@
 |---|---|
 | Дата обновления | 2026-09-04 |
 | Ветка | `claude/monik-implementation` |
-| Последний завершённый этап | **S9.4 — Uniswap adapter (группа S9 завершена)** |
-| Следующий этап | **S10 — Fee System, Gas System, Prices/Conversion** |
+| Последний завершённый этап | **S10 — Fee System, Gas System, Prices/Conversion** |
+| Следующий этап | **S11 — Profit Calculator** |
 | Статус разработки | ▶ идёт автономная разработка по DEVELOPMENT_PLAN.md |
-| Тесты | 1657 passed |
+| Тесты | 1730 passed |
 | Проверки | ruff ✅ · ruff format ✅ · mypy --strict ✅ · pytest ✅ |
 
 ---
@@ -406,6 +406,52 @@ contract suite.
 
 ---
 
+### S10 — Fee System, Gas System, Prices/Conversion ✅
+
+Решение **D-4**: источники gas и conversion rate подключаются через независимые
+абстракции и заменяются без изменения бизнес-логики Profit Calculator.
+
+**Fee System (`monik/services/fees/`):**
+- `FeeContext` — ключ комиссии: провайдер, сеть, операция, пара токенов,
+  отпечаток маршрута и сумма входа; отдельный `cache_key()` без суммы,
+  чтобы не обобщать сверх необходимого и не дробить кэш;
+- `FeePolicy` (protocol) и реализации: `QuoteInclusiveFeePolicy` (комиссия уже
+  учтена в котировке → `CostInclusion.INCLUDED_IN_QUOTE`, дополнительно
+  вычитать нечего), `PercentageFeePolicy` (база процента задаётся явно),
+  `UnknownFeePolicy` (статус `UNKNOWN`, суммы нет);
+- `FeeService` — снимки с версией правил (`FEE_RULES_VERSION`), свежесть и
+  переиспользование снимка, объединение одновременных одинаковых запросов
+  через `InFlightRegistry`, группировка дубликатов в `refresh()`,
+  опциональное сохранение через `SqliteFeeRepository`.
+  **Провайдер без зарегистрированной policy даёт `UNKNOWN`, а не ноль.**
+
+**Gas System (`monik/services/gas/`):**
+- `GasPriceProvider` (protocol); `RpcGasPriceProvider` — EIP-1559 через
+  `eth_feeHistory` (base fee + priority fee) с fallback на `eth_gasPrice`,
+  запрос идёт **через Resource Manager** (владелец ресурса `rpc`);
+  `StaticGasPriceProvider` — **test implementation**;
+- `GasEstimator` — `cost = gas_units × wei_per_gas / 10^18` в точной
+  арифметике `Decimal`; отсутствие units, цены или native token даёт
+  `FeeStatus.UNKNOWN`, а не ноль.
+
+**Prices (`monik/services/prices/`):**
+- `TokenPriceProvider` (protocol); `AggregatorQuotePriceProvider` — курс из
+  исполнимой котировки уже подключённого агрегатора; `HttpPriceProvider` —
+  внешний сервис задаётся конфигурацией, binary float в ответе отклоняется,
+  запрос через Resource Manager (владелец `prices`); `StaticPriceProvider` —
+  **test implementation**;
+- `ConversionService` — кэш с учётом свежести, последовательный перебор
+  источников, **явное направление** конверсии (неявная инверсия запрещена),
+  отказ использовать устаревший курс.
+
+`ResourceKey.provider_id` расширен до `ProviderId | str`: через Resource
+Manager проходят также не-агрегаторные владельцы (RPC, price API) — `01 §34`.
+
+**Тестирование:** `pytest` ✅ **1730 passed**; `ruff` ✅ · `ruff format` ✅ ·
+`mypy --strict` ✅ (158 модулей).
+
+---
+
 ## GIT COMMITS
 
 | Этап | Commit | Описание |
@@ -437,6 +483,8 @@ contract suite.
 | S9.2 | `ab4dcfc` | `feat: implement 0x adapter` |
 | S9.3 | `702e5c5` | `feat: implement velora adapter` |
 | S9.4 | `66311ff` | `feat: implement uniswap adapter and provider api verification script` |
+| S9.4 | `75c5e75` | `docs: update development status after stages S9.2-S9.4` |
+| S10 | `425e1fc` | `feat: implement fee system, gas providers and price conversion` |
 
 ---
 
@@ -460,8 +508,8 @@ contract suite.
 | S9.2 | 0x adapter | ✅ |
 | S9.3 | Velora adapter | ✅ |
 | S9.4 | Uniswap adapter | ✅ |
-| S10 | Fee System, Gas System, conversion | 🔜 следующий |
-| S11 | Profit Calculator | ⬜ |
+| S10 | Fee System, Gas System, conversion | ✅ |
+| S11 | Profit Calculator | 🔜 следующий |
 | S12 | Level 1 Scanner | ⬜ |
 | S13 | Level 2 Scanner | ⬜ |
 | S14 | Opportunity Service | ⬜ |
@@ -499,33 +547,22 @@ Telegram API заблокированы egress-политикой; ключей 
 
 ## СЛЕДУЮЩИЙ ШАГ
 
-**S10 — Fee System, Gas System, Prices/Conversion** согласно
-`DEVELOPMENT_PLAN.md` §5 и решению D-4.
+**S11 — Profit Calculator** согласно `DEVELOPMENT_PLAN.md` §5.
 
-Что нужно сделать:
-- `monik/services/fees/`: `FeeProvider` interface, `FeePolicy` per-provider
-  (никаких `if aggregator == ...` вне policy), `FeeKey` без чрезмерного
-  обобщения, статусы `KNOWN/UNKNOWN/UNSUPPORTED/EXPIRED/ERROR`, freshness и
-  expiration, discovery на startup и по расписанию, grouping/batching,
-  дедупликация запросов, снимки с версией, rebate отдельным компонентом;
-- `monik/services/gas/`: `GasPriceProvider` protocol + `RpcGasPriceProvider`
-  (eth_gasPrice / eth_feeHistory, EIP-1559), `AdapterGasEstimateProvider`,
-  `StaticGasPriceProvider` (test impl); `GasEstimator` =
-  gas_units × gas_price; при недостатке данных → `UNKNOWN`, не 0;
-- `monik/services/prices/`: `TokenPriceProvider` protocol +
-  `AggregatorQuotePriceProvider`, `HttpPriceProvider`, `StaticPriceProvider`;
-  `ConversionService` — native gas token → базовая валюта расчёта, с
-  source/timestamp/pair/rate/precision и явным направлением; при stale или
-  недоступности → `PARTIAL`/`UNKNOWN`.
+Что нужно сделать (`monik/services/calculator/`):
+- `ProfitCalculator.calculate(ProfitCalculationInput) -> ProfitResult` —
+  **чистая функция**: без HTTP, БД, Telegram и Scheduler;
+- формулы (`09 §9-14`): `gross_profit = final_output − input_amount`;
+  `gross_roi = gross_profit / input_amount × 100`;
+  `total_costs = total_fees + gas_cost + other_costs − rebates`;
+  `net_profit = gross_profit − total_costs`;
+  `net_roi = net_profit / input × 100`;
+- статусы результата `COMPLETE / PARTIAL / INVALID / UNKNOWN`;
+- threshold: метрика `net_roi`, сравнение `>=`; **если неизвестный расход
+  способен изменить результат относительно порога — порог не считается
+  пройденным**;
+- предотвращение двойного учёта через `included_in_quote`;
+- покомпонентный breakdown, `profit_formula_version = 1`, детерминизм.
 
-Всё готово для этого этапа: доменные модели `Fee`/`FeeSnapshot`/`Gas`/
-`GasPrice`/`ConversionRate`, репозитории `SqliteFeeRepository` и
-`SqliteGasRepository`, `ResourceManager` с дедупликацией и batch-стоимостью,
-секции конфигурации `fees`/`gas`/`prices`, адаптеры с `discover_fees`.
-
-Обязательные тесты: UNKNOWN не превращается в 0 · expired fee ·
-percentage/fixed/multi-leg · база процентной комиссии берётся из policy ·
-дедупликация одновременных fee-запросов · batching · EIP-1559 расчёт ·
-gas из route estimate · отсутствие gas → UNKNOWN · подстановка любой
-реализации price provider без изменения Calculator · stale conversion ·
-`included_in_quote` предотвращает двойной учёт.
+**DoD:** ни одной финансовой формулы вне этого модуля (architecture-тест).
+**Commit:** `feat: implement deterministic profit calculator with decimal arithmetic`
