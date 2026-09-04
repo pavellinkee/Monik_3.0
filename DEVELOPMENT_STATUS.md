@@ -12,10 +12,10 @@
 |---|---|
 | Дата обновления | 2026-09-04 |
 | Ветка | `claude/monik-implementation` |
-| Последний завершённый этап | **S9.1 — 1inch adapter** |
-| Следующий этап | **S9.2 — 0x adapter** |
+| Последний завершённый этап | **S9.4 — Uniswap adapter (группа S9 завершена)** |
+| Следующий этап | **S10 — Fee System, Gas System, Prices/Conversion** |
 | Статус разработки | ▶ идёт автономная разработка по DEVELOPMENT_PLAN.md |
-| Тесты | 1520 passed |
+| Тесты | 1657 passed |
 | Проверки | ruff ✅ · ruff format ✅ · mypy --strict ✅ · pytest ✅ |
 
 ---
@@ -356,6 +356,56 @@ amounts без float, отказ подставлять ноль, сборка �
 
 ---
 
+### S9.2 — 0x adapter ✅
+
+⚠️ **API contract NOT verified against live endpoint** (решение D-3).
+
+Swap API v2 (allowance-holder): собственная схема аутентификации
+(`0x-api-key` + `0x-version`), индикативная цена `/swap/allowance-holder/price`
+(Monik не исполняет свопы), разбор `buyAmount` и `gas` без float, проверка
+совпадения `sellAmount`, маршрут из `route.fills` с устойчивым отпечатком.
+
+---
+
+### S9.3 — Velora (ParaSwap) adapter ✅
+
+⚠️ **API contract NOT verified against live endpoint** (решение D-3).
+Решение D-5: `provider_id = "velora"`, базовый URL `api.paraswap.io`
+переопределяется конфигурацией.
+
+Market API: используется только `/prices`; параметры включают
+`srcDecimals`/`destDecimals` из метаданных токена; разбор `priceRoute`
+(`destAmount`, `gasCost`), проверка `srcAmount`, рекурсивный сбор
+обменников из вложенного `bestRoute`; работа без ключа с опциональным
+partner-заголовком.
+
+---
+
+### S9.4 — Uniswap adapter ✅
+
+⚠️ **API contract NOT verified against live endpoint** (решение D-3).
+
+Trading API: POST `/v1/quote` с телом `EXACT_INPUT`, заголовок `x-api-key`,
+разбор `output.amount` и `gasUseEstimate`, рекурсивный сбор пулов.
+
+**Ключевое:** Classic и семейство UniswapX сохраняются как **разные**
+routing modes и не объединяются. Routing mode входит в identity маршрута,
+поэтому смена режима даёт другой отпечаток и распознаётся Level 2 как
+`MISMATCH`. Неизвестное значение `routing` отклоняется, а не подменяется.
+
+`HttpProviderAdapter` дополнен поддержкой метода и тела запроса.
+
+**`scripts/verify_provider_api.py`** — реальная проверка контрактов
+провайдерских API: вызывает те же адаптеры, что и приложение, не выполняет
+свопов, запускается в среде с сетевым доступом и ключами. Именно этот
+скрипт закрывает ограничение решения D-3.
+
+**Тестирование:** `pytest` ✅ **1657 passed**; `ruff` ✅ · `ruff format` ✅ ·
+`mypy --strict` ✅ (151 модуль). Все четыре адаптера проходят общий
+contract suite.
+
+---
+
 ## GIT COMMITS
 
 | Этап | Commit | Описание |
@@ -383,6 +433,10 @@ amounts без float, отказ подставлять ноль, сборка �
 | S8 | `cd8facf` | `docs: update development status after stage S8` |
 | S9.0 | `a835438` | `feat: add aggregator adapter contract and shared contract test suite` |
 | S9.1 | `f0d62fc` | `feat: implement 1inch adapter` |
+| S9.1 | `0021a38` | `docs: update development status after stages S9.0 and S9.1` |
+| S9.2 | `ab4dcfc` | `feat: implement 0x adapter` |
+| S9.3 | `702e5c5` | `feat: implement velora adapter` |
+| S9.4 | `66311ff` | `feat: implement uniswap adapter and provider api verification script` |
 
 ---
 
@@ -403,10 +457,10 @@ amounts без float, отказ подставлять ноль, сборка �
 | S8 | Resource Manager | ✅ |
 | S9.0 | Adapter contract + contract test suite + FakeAdapter | ✅ |
 | S9.1 | 1inch adapter | ✅ |
-| S9.2 | 0x adapter | 🔜 следующий |
-| S9.3 | Velora adapter | ⬜ |
-| S9.4 | Uniswap adapter | ⬜ |
-| S10 | Fee System, Gas System, conversion | ⬜ |
+| S9.2 | 0x adapter | ✅ |
+| S9.3 | Velora adapter | ✅ |
+| S9.4 | Uniswap adapter | ✅ |
+| S10 | Fee System, Gas System, conversion | 🔜 следующий |
 | S11 | Profit Calculator | ⬜ |
 | S12 | Level 1 Scanner | ⬜ |
 | S13 | Level 2 Scanner | ⬜ |
@@ -445,24 +499,33 @@ Telegram API заблокированы egress-политикой; ключей 
 
 ## СЛЕДУЮЩИЙ ШАГ
 
-**S9.2 — адаптер 0x**, затем **S9.3 — Velora (ParaSwap)** и
-**S9.4 — Uniswap**.
+**S10 — Fee System, Gas System, Prices/Conversion** согласно
+`DEVELOPMENT_PLAN.md` §5 и решению D-4.
 
-Шаблон уже задан адаптером 1inch — повторить структуру:
-- `endpoints.py` с базовым URL, версией, идентификаторами сетей и путями;
-  пометка `API contract NOT verified against live endpoint`;
-- класс адаптера на основе `HttpProviderAdapter`;
-- разбор ответа через `monik.infrastructure.providers.normalization`;
-- `tests/unit/providers/test_<provider>_adapter.py` (запрос, разбор,
-  ошибки, fixed-route, discovery) и
-  `tests/contract/test_<provider>_contract.py` с прогоном общего
-  contract suite.
+Что нужно сделать:
+- `monik/services/fees/`: `FeeProvider` interface, `FeePolicy` per-provider
+  (никаких `if aggregator == ...` вне policy), `FeeKey` без чрезмерного
+  обобщения, статусы `KNOWN/UNKNOWN/UNSUPPORTED/EXPIRED/ERROR`, freshness и
+  expiration, discovery на startup и по расписанию, grouping/batching,
+  дедупликация запросов, снимки с версией, rebate отдельным компонентом;
+- `monik/services/gas/`: `GasPriceProvider` protocol + `RpcGasPriceProvider`
+  (eth_gasPrice / eth_feeHistory, EIP-1559), `AdapterGasEstimateProvider`,
+  `StaticGasPriceProvider` (test impl); `GasEstimator` =
+  gas_units × gas_price; при недостатке данных → `UNKNOWN`, не 0;
+- `monik/services/prices/`: `TokenPriceProvider` protocol +
+  `AggregatorQuotePriceProvider`, `HttpPriceProvider`, `StaticPriceProvider`;
+  `ConversionService` — native gas token → базовая валюта расчёта, с
+  source/timestamp/pair/rate/precision и явным направлением; при stale или
+  недоступности → `PARTIAL`/`UNKNOWN`.
 
-Особенности, которые нужно учесть:
-- **0x**: Swap API, заголовок с ключом, ответ с `buyAmount`/`sellAmount`,
-  источники ликвидности в `sources`/`route`.
-- **Velora (ParaSwap)**: двухшаговая модель `prices` → `transactions`;
-  для котировки достаточно `prices`; маршрут описан вложенной структурой.
-- **Uniswap**: обязательно сохранять различие routing modes
-  (`CLASSIC` против `UniswapX Dutch/Priority`) — объединять их запрещено;
-  соответствующие значения уже есть в `RoutingMode`.
+Всё готово для этого этапа: доменные модели `Fee`/`FeeSnapshot`/`Gas`/
+`GasPrice`/`ConversionRate`, репозитории `SqliteFeeRepository` и
+`SqliteGasRepository`, `ResourceManager` с дедупликацией и batch-стоимостью,
+секции конфигурации `fees`/`gas`/`prices`, адаптеры с `discover_fees`.
+
+Обязательные тесты: UNKNOWN не превращается в 0 · expired fee ·
+percentage/fixed/multi-leg · база процентной комиссии берётся из policy ·
+дедупликация одновременных fee-запросов · batching · EIP-1559 расчёт ·
+gas из route estimate · отсутствие gas → UNKNOWN · подстановка любой
+реализации price provider без изменения Calculator · stale conversion ·
+`included_in_quote` предотвращает двойной учёт.
