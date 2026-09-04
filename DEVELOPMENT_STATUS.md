@@ -12,10 +12,10 @@
 |---|---|
 | Дата обновления | 2026-09-04 |
 | Ветка | `claude/monik-implementation` |
-| Последний завершённый этап | **S19 — Observability** |
-| Следующий этап | **S20 — Application wiring, startup, shutdown, recovery** |
+| Последний завершённый этап | **S20 — Application wiring, startup, shutdown, recovery** |
+| Следующий этап | **S21 — Integration tests (сквозные сценарии)** |
 | Статус разработки | ▶ идёт автономная разработка по DEVELOPMENT_PLAN.md |
-| Тесты | 2860 passed |
+| Тесты | 2890 passed |
 | Проверки | ruff ✅ · ruff format ✅ · mypy --strict ✅ · pytest ✅ |
 
 ---
@@ -715,6 +715,41 @@ Opportunity настоящим Level 1 на тех же адаптерах, по
 
 ---
 
+### S20 — Application wiring, startup, shutdown, recovery ✅
+
+**Реализовано (`monik/app/`):**
+- `container.py` — composition root: явная сборка всех подсистем из
+  конфигурации, без глобальных изменяемых singletons. Allowlist хостов
+  строится из фактически настроенных endpoints (провайдеры, RPC, price API,
+  Telegram), поэтому обращение к постороннему хосту блокируется политикой
+  URL ещё до отправки. Адаптеры отключённых провайдеров не создаются;
+  набор адаптеров можно передать явно;
+- `recovery.py` — восстановление **до** запуска воркеров: Job, оставшийся
+  `RUNNING`, возвращается в очередь как прерванный (новая попытка начинает
+  проверку заново, старые котировки свежими не считаются, runtime-локи не
+  восстанавливаются); просроченные Job и Opportunity получают `EXPIRED`;
+  уведомления в `SENDING` возвращаются в очередь и не считаются
+  доставленными (`15 §61`), уже отправленные не трогаются;
+- `lifecycle.py` — `Application`: startup по порядку `CLAUDE.md §30`,
+  регистрация задач планировщика (Level 1 scan, доставка уведомлений,
+  входящий Telegram, загрузка capability при старте), запуск под
+  Supervisor и graceful shutdown с таймаутом из конфигурации;
+- `main.py` — рабочий entrypoint: `--config`, `--check-config`, graceful
+  остановка по SIGINT/SIGTERM, отдельный код возврата для `SAFE_STOP`.
+
+Сопутствующее: Scheduler сохраняет состояние задач перед записью запусков
+(`14 §57`), `SchedulerTaskState` перенесён в domain; `GasConfig` получил
+`static_wei_per_gas` как явный fallback — отсутствие пригодного источника
+газа или цены является ошибкой конфигурации, а не молчаливым нулём.
+
+**Тестирование:** `pytest` ✅ **2890 passed**. E2E покрывают старт на чистой
+и на существующей базе, сквозной цикл scan → Level 2 → подтверждение →
+очередь доставки с кнопкой `об`, recovery прерванного Job, просроченного
+Job и прерванного уведомления, отсутствие дублей при повторном старте и
+graceful shutdown.
+
+---
+
 ## GIT COMMITS
 
 | Этап | Commit | Описание |
@@ -760,6 +795,8 @@ Opportunity настоящим Level 1 на тех же адаптерах, по
 | S17 | `1a2d9f9` | `feat: implement scheduler with startup, interval and daily tasks` |
 | S18 | `16ffd4e` | `feat: add health monitoring and supervisor with safe stop` |
 | S19 | `a8fff3d` | `feat: add structured observability, metrics and correlation context` |
+| S19 | `b1d4bef` | `docs: update development status after stages S16-S19` |
+| S20 | `55a63f2` | `feat: wire application lifecycle with startup, recovery and graceful shutdown` |
 
 ---
 
@@ -793,8 +830,8 @@ Opportunity настоящим Level 1 на тех же адаптерах, по
 | S17 | Scheduler | ✅ |
 | S18 | Health Monitoring + Supervisor | ✅ |
 | S19 | Observability | ✅ |
-| S20 | App wiring, startup, recovery, shutdown | 🔜 следующий |
-| S21 | Integration / E2E тесты | ⬜ |
+| S20 | App wiring, startup, recovery, shutdown | ✅ |
+| S21 | Integration / E2E тесты | 🔜 следующий |
 | S22 | Recovery / crash тесты | ⬜ |
 | S23 | Architecture + security тесты | ⬜ |
 | S24 | Performance проверки | ⬜ |
@@ -822,25 +859,15 @@ Telegram API заблокированы egress-политикой; ключей 
 
 ## СЛЕДУЮЩИЙ ШАГ
 
-**S20 — Application wiring, startup, shutdown, recovery** согласно
-`DEVELOPMENT_PLAN.md` §5 и порядку `CLAUDE.md` §30:
+**S21 — Integration tests (сквозные сценарии)** согласно
+`DEVELOPMENT_PLAN.md` §5, затем S22 (recovery/crash), S23 (architecture +
+security), S24 (performance), S25 (deployment, документация, финальный
+отчёт).
 
-1. загрузить configuration; 2. открыть SQLite; 3. проверить integrity;
-4. выполнить migrations; 5. восстановить незавершённое состояние;
-6. инициализировать adapters; 7. Resource Manager; 8. Scheduler;
-9. Telegram; 10. запустить workers.
-
-Что нужно сделать:
-- composition root (`monik/app/`): сборка всех подсистем из конфигурации,
-  без бизнес-логики в entrypoint;
-- recovery: Level 2 в статусе `RUNNING` после аварии становится
-  `INTERRUPTED`/новая попытка, старые quotes свежими не считаются, runtime
-  locks не восстанавливаются (`CLAUDE.md §30`); уведомления в `SENDING`
-  возвращаются в очередь;
-- graceful shutdown: новые циклы не создаются, активные корректно
-  завершаются, состояние сохраняется;
-- рабочий `monik` entrypoint вместо текущей заглушки.
-
-Все подсистемы для этого готовы: Level 1/Level 2, Opportunity Service,
-Notification System и Telegram, команды, Scheduler, Health/Supervisor,
-Observability, репозитории и миграции.
+Что нужно сделать на S21:
+- сквозные сценарии на детерминированных адаптерах: полный цикл поиска и
+  подтверждения; несколько сумм; частичное подтверждение; недоступный
+  провайдер; несовпадение маршрута; неизвестная комиссия;
+- параллельные циклы токенов и конкуренция Level 1 / Level 2 за ресурсы;
+- дедупликация Opportunity и Level 2 workflow в сквозном сценарии;
+- доставка уведомления и обработка команды на реальных репозиториях.
