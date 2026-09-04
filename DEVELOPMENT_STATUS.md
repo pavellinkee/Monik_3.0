@@ -12,10 +12,10 @@
 |---|---|
 | Дата обновления | 2026-09-04 |
 | Ветка | `claude/monik-implementation` |
-| Последний завершённый этап | **S6 — Registries** |
-| Следующий этап | **S7 — HTTP infrastructure (TLS, SSRF, limits)** |
+| Последний завершённый этап | **S7 — HTTP infrastructure** |
+| Следующий этап | **S8 — Resource Manager** |
 | Статус разработки | ▶ идёт автономная разработка по DEVELOPMENT_PLAN.md |
-| Тесты | 1157 passed |
+| Тесты | 1355 passed |
 | Проверки | ruff ✅ · ruff format ✅ · mypy --strict ✅ · pytest ✅ |
 
 ---
@@ -275,6 +275,34 @@ runtime-проверку · `UNSUPPORTED` блокирует запрос · tim
 
 ---
 
+### S7 — HTTP infrastructure ✅
+
+**Реализовано (`monik/infrastructure/http/`, секция конфигурации `http`):**
+- `UrlPolicy` — allowlist хостов и защита от SSRF: только `https`, запрет
+  credentials в URL, блокировка loopback, приватных, link-local, reserved,
+  multicast и unspecified адресов;
+- `HttpRequest` / `HttpResponse` — нормализованные контракты, объекты `httpx`
+  наружу не выходят; некорректный JSON — `DataError`;
+- `HttpxClient` — проверка URL до отправки и повторная проверка финального
+  URL после редиректа, лимит размера тела, длительность по монотонным часам,
+  нормализация transport-ошибок; retry и rate limiting **не** реализуются —
+  это ответственность Resource Manager;
+- `classify_response` — 429 → `RateLimitError` с разбором `Retry-After`,
+  401/403 → `AuthenticationError`, 5xx → `ProviderError`, прочие 4xx →
+  `DataError`;
+- `FakeHttpClient` — детерминированная **test implementation**.
+
+`verify_tls` отключить нельзя.
+
+**Тестирование:** `pytest` ✅ **1355 passed**; `ruff` ✅ · `ruff format` ✅ ·
+`mypy --strict` ✅ (133 модуля).
+
+Architecture-тесты: HTTP-библиотеки не импортируются вне
+`monik/infrastructure/http`; `verify=False` отсутствует в коде.
+Security-тесты: заголовок авторизации и API-ключ не попадают в логи.
+
+---
+
 ## GIT COMMITS
 
 | Этап | Commit | Описание |
@@ -295,6 +323,8 @@ runtime-проверку · `UNSUPPORTED` блокирует запрос · tim
 | S5 | `780d2a6` | `feat: add notification, fee, gas, capability, scheduler and audit repositories` |
 | S5 | `238aaeb` | `docs: update development status after stage S5` |
 | S6 | `f7e73e9` | `feat: add token, network, provider and capability registries` |
+| S6 | `61eec08` | `docs: update development status after stage S6` |
+| S7 | `03b8997` | `feat: add controlled async http client with ssrf and tls safeguards` |
 
 ---
 
@@ -311,8 +341,8 @@ runtime-проверку · `UNSUPPORTED` блокирует запрос · tim
 | S4 | SQLite, schema, migrations, transactions | ✅ |
 | S5 | Repositories | ✅ |
 | S6 | Token/Network/Provider/Capability registries | ✅ |
-| S7 | HTTP infrastructure (TLS, SSRF, limits) | 🔜 следующий |
-| S8 | Resource Manager | ⬜ |
+| S7 | HTTP infrastructure (TLS, SSRF, limits) | ✅ |
+| S8 | Resource Manager | 🔜 следующий |
 | S9.0 | Adapter contract + contract test suite + FakeAdapter | ⬜ |
 | S9.1 | 1inch adapter | ⬜ |
 | S9.2 | 0x adapter | ⬜ |
@@ -357,24 +387,35 @@ Telegram API заблокированы egress-политикой; ключей 
 
 ## СЛЕДУЮЩИЙ ШАГ
 
-**S7 — HTTP infrastructure** согласно `DEVELOPMENT_PLAN.md` §5.
+**S8 — Resource Manager** согласно `DEVELOPMENT_PLAN.md` §5.
 
-Что нужно сделать (`monik/infrastructure/http/`):
-- `HttpClient` protocol и реализация на `httpx`: timeouts, TLS verification
-  (отключать нельзя), лимит размера ответа, redirect policy, connection
-  pooling, request id, нормализация transport-ошибок в `MonikError`
-  (уже есть `NetworkError`, `TimeoutError`, `RateLimitError`,
-  `AuthenticationError`, `ProviderError`, `DataError`);
-- **SSRF-защита**: allowlist хостов из конфигурации; запрет запросов по
-  произвольным URL из ответов провайдеров;
-- `FakeHttpClient` для тестов: детерминированные ответы, инъекция ошибок
-  и таймаутов (пометить как test implementation).
+Что нужно сделать (`monik/services/resources/`):
+- resource key и иерархические лимиты (provider → provider+network →
+  provider+network+operation); модель `ResourceKey` уже есть в домене;
+- состояния ресурса `AVAILABLE/BUSY/RATE_LIMITED/COOLDOWN/CIRCUIT_OPEN`;
+- acquisition/lease с таймаутом и гарантированным release;
+- **priority queue**: Level 2 > Level 1 SELL > Level 1 BUY > Maintenance,
+  внутри приоритета — `created_at` + sequence (`ResourceRequest.ordering_key`
+  уже реализован);
+- concurrency limits и **отдельно** rate limits (sliding window / token
+  bucket) — это разные ограничения;
+- retry: `max_attempts=3`, exponential backoff + jitter, обязательный учёт
+  `Retry-After`, запрет retry-storm;
+- circuit breaker `CLOSED/OPEN/HALF_OPEN` с восстановлением; **не изменяет**
+  Capability Registry;
+- in-flight deduplication (одинаковые одновременные запросы объединяются,
+  семантика не меняется);
+- batch support с корректным rate-limit accounting;
+- backpressure, queue limits, отмена устаревших задач, graceful shutdown;
+- метрики: queue wait, execution latency, total latency.
 
-Понадобится секция конфигурации для HTTP (allowlist хостов, лимит размера
-ответа, redirect policy) — добавить по образцу существующих секций.
+Всё нужное уже готово: `RequestPriority.rank`, `ResourceRequest/ResourceResult`,
+`CircuitState`, `RetryConfig`/`CircuitBreakerConfig`/`ResourceConfig`,
+`Clock`/`FakeClock`, нормализованные ошибки и их классификация
+(`is_retryable`), `FakeHttpClient`.
 
-Обязательные тесты: timeout, 4xx/5xx/429 с `Retry-After`, превышение размера
-ответа, запрет redirect на неразрешённый host, SSRF-блокировка, TLS verify
-включён, заголовок `Authorization` не попадает в логи. Architecture-тест
-должен подтвердить, что `httpx` не импортируется вне
-`monik/infrastructure/http`.
+Обязательные тесты: конкурентность, переполнение очереди, таймаут, retry и
+backoff, jitter в границах, `Retry-After`, rate limit, переходы circuit
+breaker и восстановление, приоритеты (Level 2 обгоняет Level 1), запрет
+starvation, отмена, отсутствие утечки lease при исключении, дедупликация,
+batch accounting, параллельность независимых ресурсов.
