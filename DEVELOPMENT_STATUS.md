@@ -12,10 +12,10 @@
 |---|---|
 | Дата обновления | 2026-09-04 |
 | Ветка | `claude/monik-implementation` |
-| Последний завершённый этап | **S12 — Level 1 Scanner** |
-| Следующий этап | **S13 — Level 2 Scanner** |
+| Последний завершённый этап | **S15 — Notification System + Telegram (исходящие)** |
+| Следующий этап | **S16 — Telegram commands (входящие)** |
 | Статус разработки | ▶ идёт автономная разработка по DEVELOPMENT_PLAN.md |
-| Тесты | 2310 passed |
+| Тесты | 2595 passed |
 | Проверки | ruff ✅ · ruff format ✅ · mypy --strict ✅ · pytest ✅ |
 
 ---
@@ -540,6 +540,97 @@ Architecture-тесты: Level 1 не обходит Adapter/Resource Manager, �
 
 ---
 
+### S13 — Level 2 Scanner ✅
+
+**Реализовано (`monik/services/level2/`):**
+- `routes.py` — `RouteVerifier`: свежая котировка **строго** по
+  зафиксированному маршруту через `validate_fixed_route`; явно
+  неподдерживаемый fixed route блокирует запрос (`11 §22`); ответ
+  дополнительно сверяется с отпечатком Opportunity (`11 §18-19`);
+  несоответствие даёт `MISMATCH`/`UNSUPPORTED`, а не подбор альтернативы
+  (`11 §6`);
+- `financials.py` — сборка входа расчёта из свежих данных и снимки
+  комиссий для аудита (`11 §38, §65`); собственной формулы нет (`11 §37`);
+- `amounts.py` — сначала BUY по маршруту, затем SELL на **текущем** BUY
+  output, а не на значении Level 1 (`11 §16-17`); неполный расчёт даёт
+  `UNKNOWN`, а не убыточность (`11 §52`);
+- `confirmation.py` — сведение статусов сумм; `ROUTE_UNAVAILABLE` не
+  смешивается с `UNPROFITABLE` (`11 §51`), `PARTIAL` не считается
+  `CONFIRMED` (`CLAUDE.md §26`);
+- `scanner.py` — срок проверяется до внешних запросов (`11 §26`), revision
+  и идемпотентность (`11 §70-71`), таймаут и отмена не дают `CONFIRMED`;
+- `worker.py` — `max_parallel` не превышается (`CLAUDE.md §18`), одинаковые
+  workflow объединяются (`CLAUDE.md §19`), переполненная очередь отклоняет
+  Job вместо бесконечного роста (`03 §69`).
+
+Общие порты источников стоимости вынесены в `monik/services/cost_ports.py`,
+поэтому Level 2 не зависит от Level 1.
+
+**Тестирование:** `pytest` ✅ **2431 passed**. Component-тесты строят
+Opportunity настоящим Level 1 на тех же адаптерах, поэтому проверка «тот же
+маршрут» имеет смысл. Architecture-тесты: Level 2 не вызывает `get_quote`
+напрямую и не строит запрос без `fixed_route`.
+
+---
+
+### S14 — Opportunity Service ✅
+
+**Реализовано:**
+- доменная модель `ConfirmationSnapshot` / `AmountSnapshot` — immutable
+  снимок подтверждения (`15 §8`); модель frozen, поэтому обычное изменение
+  финансовых данных даёт ошибку (`35 §66-67`);
+- `services/opportunity/snapshot.py` — сборка снимка без пересчёта
+  (`15 §14`); смешение версий формулы отклоняется;
+- `services/opportunity/statistics.py` — confirmation rate
+  `CONFIRMED / (CONFIRMED + UNCONFIRMED) × 100`, `PARTIAL` исключён, при
+  отсутствии решений — `N/A` (`CLAUDE.md §27`);
+- `services/opportunity/service.py` — `CONFIRMED`/`PARTIAL` только после
+  успешного Level 2 (`35 §60`); повторная доставка события не создаёт
+  вторую возможность и второй набор уведомлений; переходы
+  `CONFIRMED → NOTIFIED / NOTIFIED_PARTIAL / NOTIFIED_FAILED` ничего не
+  пересчитывают (`35 §62-65`);
+- `repositories/sqlite/confirmations.py` — статус возможности и записи
+  уведомлений пишутся **одной транзакцией**, поэтому возможность сохранена
+  до постановки доставки (`15 §4`); внутри транзакции нет внешних вызовов
+  (`30 §76-77`).
+
+**Тестирование:** `pytest` ✅ **2485 passed**.
+
+---
+
+### S15 — Notification System + Telegram (исходящие) ✅
+
+⚠️ **Контракт Telegram Bot API не проверен вживую** (решение D-3).
+
+**Реализовано (`monik/services/notifications/`, `monik/infrastructure/telegram/`):**
+- `formatter.py` — единый централизованный формат (`15 §47`): **Level 2 ID
+  сверху** (`CLAUDE.md §35`), сеть, тройка токенов, суммы, провайдеры,
+  прибыль и ROI; текст кнопки `об` — маршрут, отпечатки, разбивка комиссий,
+  gas, версия расчёта. Округление только для отображения (`15 §49-50`);
+- `policy.py` — правила отправки режимов `A`/`B` из конфигурации
+  (`01 §54`, `CLAUDE.md §38`). Порог прибыльности здесь отсутствует
+  намеренно: он принадлежит Profit Calculator;
+- `dispatcher.py` — очередь по `created_at + sequence` (`CLAUDE.md §37`),
+  retry с backoff и лимитом, приоритет `Retry-After` (`CLAUDE.md §32`),
+  permanent-ошибки не повторяются (`15 §65-67`), изоляция назначений
+  (`15 §55-57`), проверка сообщения до отправки (`15 §68-69`), возврат
+  застрявших `SENDING` в очередь без ложного `SENT` (`15 §60-61`);
+- `infrastructure/telegram/` — изолированный адаптер Bot API: запрос через
+  Resource Manager (`15 §29`), inline-кнопка `об` со ссылкой на сохранённое
+  уведомление, сохранение `message_id` (`15 §63`), классификация ошибок
+  (`15 §64`), `ok: false` не считается доставкой (`15 §78`).
+
+**Ключевое:** кнопка `об` присутствует в каждом уведомлении, а её текст
+формируется заранее и сохраняется вместе с уведомлением — нажатие не
+выполняет новых API-запросов (`CLAUDE.md §35`).
+
+**Тестирование:** `pytest` ✅ **2595 passed**; `ruff` ✅ · `ruff format` ✅ ·
+`mypy --strict` ✅ (197 модулей). Security-тесты: bot token не раскрывается
+в `repr`/`str`, редактируется в логах, отсутствует в теле запроса и тексте
+ошибки.
+
+---
+
 ## GIT COMMITS
 
 | Этап | Commit | Описание |
@@ -576,6 +667,10 @@ Architecture-тесты: Level 1 не обходит Adapter/Resource Manager, �
 | S10 | `ddf4b6f` | `docs: update development status after stage S10` |
 | S11 | `cee04fc` | `feat: implement deterministic profit calculator with decimal arithmetic` |
 | S12 | `0536965` | `feat: implement level 1 scanner with independent per-token buy/sell cycles` |
+| S12 | `c942f00` | `docs: update development status after stages S11 and S12` |
+| S13 | `eb4c71c` | `feat: implement level 2 scanner with fixed-route confirmation` |
+| S14 | `4f0b196` | `feat: add opportunity service with immutable financial snapshot` |
+| S15 | `e57ac4c` | `feat: implement notification system with telegram delivery and 'об' button` |
 
 ---
 
@@ -602,10 +697,10 @@ Architecture-тесты: Level 1 не обходит Adapter/Resource Manager, �
 | S10 | Fee System, Gas System, conversion | ✅ |
 | S11 | Profit Calculator | ✅ |
 | S12 | Level 1 Scanner | ✅ |
-| S13 | Level 2 Scanner | 🔜 следующий |
-| S14 | Opportunity Service | ⬜ |
-| S15 | Notification System + Telegram delivery + кнопка `об` | ⬜ |
-| S16 | Telegram commands | ⬜ |
+| S13 | Level 2 Scanner | ✅ |
+| S14 | Opportunity Service | ✅ |
+| S15 | Notification System + Telegram delivery + кнопка `об` | ✅ |
+| S16 | Telegram commands | 🔜 следующий |
 | S17 | Scheduler | ⬜ |
 | S18 | Health Monitoring + Supervisor | ⬜ |
 | S19 | Observability | ⬜ |
@@ -638,28 +733,20 @@ Telegram API заблокированы egress-политикой; ключей 
 
 ## СЛЕДУЮЩИЙ ШАГ
 
-**S13 — Level 2 Scanner** согласно `DEVELOPMENT_PLAN.md` §5.
+**S16 — Telegram commands (входящие)** согласно `DEVELOPMENT_PLAN.md` §5.
 
-Ключевое правило этапа: **Level 2 проверяет именно тот маршрут, который
-зафиксировал Level 1** (`11 §5`, `10 §31`). Он не ищет новый маршрут, не
-выбирает другой пул и не меняет routing mode; невозможность воспроизвести
-маршрут — это `ROUTE_UNAVAILABLE`, а не `UNPROFITABLE`.
+Что нужно сделать:
+- входящий канал Telegram (решение D-2): long polling через Resource
+  Manager, offset сохраняется, дубликаты `update_id` отбрасываются;
+- команды `/details K1234`, `/level2`, `/status`, `/stats` и обработка
+  нажатия кнопки `об`;
+- **ответ формируется из сохранённого snapshot: новых внешних запросов
+  не выполняется** (`CLAUDE.md` §35);
+- проверка источника команды (разрешённый chat id), некорректный ввод не
+  приводит к ошибке подсистемы;
+- Telegram не блокирует Scanner (`CLAUDE.md` §35).
 
-Что нужно сделать (`monik/services/level2/`):
-- воркер Job: `QUEUED → RUNNING → {CONFIRMED, REJECTED, FAILED, EXPIRED,
-  CANCELLED}`; `max_parallel` по умолчанию 20 и никогда не превышается
-  (`CLAUDE.md` §18); логические Job отделены от resource locks;
-- дедупликация одинаковых workflow (`CLAUDE.md` §19);
-- свежие BUY-котировки по фиксированному маршруту через
-  `validate_fixed_route`; **SELL считается от текущего BUY output**, а не от
-  значения Level 1 (`11 §16-17`);
-- комиссии, gas и conversion для каждой суммы отдельно; расчёт через
-  `ProfitCalculator`; статусы подтверждения `CONFIRMED/UNCONFIRMED/PARTIAL`
-  (`CLAUDE.md` §26) и confirmation rate без `PARTIAL` (`CLAUDE.md` §27);
-- прерванная попытка после аварии становится `INTERRUPTED`, старые
-  котировки свежими не считаются (`CLAUDE.md` §30).
-
-Готово для этапа: `Level2Job`/`Level2Attempt`/`AmountVerificationResult`/
-`ConfirmationResult`, `SqliteJobRepository`, `RouteValidation` во всех
-четырёх адаптерах, `ProfitCalculator`, Fee/Gas/Conversion, Resource Manager
-с приоритетом `LEVEL2` и дедупликацией, порт `Level2Dispatcher` из Level 1.
+Готово для этапа: `SqliteNotificationRepository.load_texts` (тексты кнопки
+`об`), `SqliteJobRepository.load_confirmation`, `SqliteOpportunityRepository`,
+`ConfirmationStatistics`, `TelegramNotificationAdapter` и endpoints
+`getUpdates` / `answerCallbackQuery`.
