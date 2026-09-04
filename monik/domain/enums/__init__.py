@@ -23,7 +23,11 @@ from monik.domain.enums.lifecycle import (
     ScanStatus,
     TaskExecutionStatus,
 )
-from monik.domain.enums.notifications import DestinationKind, NotificationMode
+from monik.domain.enums.notifications import (
+    DeliveryErrorKind,
+    DestinationKind,
+    NotificationMode,
+)
 from monik.domain.enums.operations import (
     OperationType,
     RouteValidationOutcome,
@@ -49,6 +53,7 @@ __all__ = [
     "CapabilityStatus",
     "CircuitState",
     "CostInclusion",
+    "DeliveryErrorKind",
     "DestinationKind",
     "DomainEnum",
     "ErrorCategory",

@@ -24,3 +24,33 @@ class DestinationKind(DomainEnum):
     """
 
     TELEGRAM = "telegram"
+
+
+class DeliveryErrorKind(DomainEnum):
+    """Классификация ошибки доставки (``15_NOTIFICATION_SYSTEM.md`` §64).
+
+    Permanent-ошибки не повторяются бесконечно (§65), temporary — могут
+    повторяться в пределах лимита (§66).
+    """
+
+    RATE_LIMIT = "rate_limit"
+    NETWORK_ERROR = "network_error"
+    AUTH_ERROR = "auth_error"
+    INVALID_REQUEST = "invalid_request"
+    DESTINATION_ERROR = "destination_error"
+    PROVIDER_ERROR = "provider_error"
+    UNKNOWN_ERROR = "unknown_error"
+
+    @property
+    def is_retryable(self) -> bool:
+        """Можно ли повторить доставку.
+
+        Неверные credentials, неверный destination и некорректное сообщение
+        не исправляются повтором (§65, §67).
+        """
+        return self in {
+            DeliveryErrorKind.RATE_LIMIT,
+            DeliveryErrorKind.NETWORK_ERROR,
+            DeliveryErrorKind.PROVIDER_ERROR,
+            DeliveryErrorKind.UNKNOWN_ERROR,
+        }

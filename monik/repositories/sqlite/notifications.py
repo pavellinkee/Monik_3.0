@@ -135,6 +135,22 @@ class SqliteNotificationRepository:
         )
         return tuple(self._to_domain(row) for row in rows)
 
+    async def list_by_status(
+        self, status: NotificationStatus, *, limit: int
+    ) -> tuple[Notification, ...]:
+        """Уведомления в указанном статусе, в порядке формирования.
+
+        Нужен recovery: после аварии уведомления, оставшиеся в ``SENDING``,
+        обрабатываются отдельной политикой
+        (``15_NOTIFICATION_SYSTEM.md`` §60-61).
+        """
+        rows = await self._database.fetch_all(
+            f"SELECT {_COLUMNS} FROM notifications WHERE status = ? "
+            "ORDER BY created_at, sequence LIMIT ?",
+            (status.value, limit),
+        )
+        return tuple(self._to_domain(row) for row in rows)
+
     async def claim_pending(self, *, now: UtcDatetime, limit: int) -> tuple[Notification, ...]:
         """Уведомления, готовые к отправке, в порядке формирования."""
         placeholders = ", ".join("?" for _ in _PENDING_STATUSES)

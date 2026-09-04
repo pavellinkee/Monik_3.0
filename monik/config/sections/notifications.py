@@ -10,7 +10,23 @@ from monik.config.base import ConfigSection
 from monik.config.secrets import SecretRef
 from monik.domain.enums.notifications import NotificationMode
 
-__all__ = ["NotificationConfig", "TelegramConfig"]
+__all__ = ["NotificationConfig", "NotificationModeRules", "TelegramConfig"]
+
+
+class NotificationModeRules(ConfigSection):
+    """Правила отправки одного режима (``01_PROJECT_REQUIREMENTS.md`` §54).
+
+    Конкретное поведение режима определяется configuration policy, а не
+    зашито в код. Режим влияет **только** на правила отправки и не изменяет
+    алгоритмы Level 1 / Level 2 (``CLAUDE.md`` §38).
+
+    Порог прибыльности здесь отсутствует намеренно: он принадлежит
+    Profit Calculator (``09_PROFIT_CALCULATOR.md`` §2, §30), и второй
+    источник истины для него создавать нельзя.
+    """
+
+    send_confirmed: bool = True
+    send_partial: bool = True
 
 
 class TelegramConfig(ConfigSection):
@@ -60,7 +76,14 @@ class NotificationConfig(ConfigSection):
     retry_initial_delay_seconds: float = Field(default=2.0, gt=0, le=300)
     retry_max_delay_seconds: float = Field(default=300.0, gt=0, le=3600)
     deduplication_window_seconds: int = Field(default=3600, ge=0, le=86_400)
+    show_calculation_version: bool = False
+    mode_a: NotificationModeRules = NotificationModeRules()
+    mode_b: NotificationModeRules = NotificationModeRules()
     telegram: TelegramConfig = TelegramConfig()
+
+    def rules_for(self, mode: NotificationMode) -> NotificationModeRules:
+        """Правила отправки выбранного режима."""
+        return self.mode_a if mode is NotificationMode.A else self.mode_b
 
     @model_validator(mode="after")
     def _validate(self) -> Self:

@@ -197,6 +197,14 @@ notifications:
   retry_initial_delay_seconds: 2.0
   retry_max_delay_seconds: 300.0
   deduplication_window_seconds: 3600
+  show_calculation_version: false  # версия формулы в тексте уведомления
+  # Режим влияет ТОЛЬКО на правила отправки и не меняет Level 1 / Level 2.
+  mode_a:
+    send_confirmed: true
+    send_partial: true
+  mode_b:
+    send_confirmed: true
+    send_partial: true
   telegram:
     enabled: false
     bot_token: { env: "MONIK_TELEGRAM_BOT_TOKEN" }
