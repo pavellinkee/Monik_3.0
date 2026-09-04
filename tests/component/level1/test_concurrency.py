@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -57,11 +58,13 @@ class RecordingAdapter:
         *,
         block_symbol: str | None = None,
         gate: asyncio.Event | None = None,
+        on_record: Callable[[str], None] | None = None,
     ) -> None:
         self._inner = inner
         self._order = order
         self._block_symbol = block_symbol
         self._gate = gate
+        self._on_record = on_record
         self.in_flight = 0
         self.max_in_flight = 0
 
@@ -89,7 +92,10 @@ class RecordingAdapter:
             ):
                 await self._gate.wait()
             quote = await self._inner.get_quote(request)
-            self._order.append(f"{request.operation.value}:{symbol}")
+            entry = f"{request.operation.value}:{symbol}"
+            self._order.append(entry)
+            if self._on_record is not None:
+                self._on_record(entry)
             return quote
         finally:
             self.in_flight -= 1
@@ -115,17 +121,25 @@ async def test_sell_of_one_token_does_not_wait_for_buy_of_another(
 ) -> None:
     """SELL токена A выполняется, пока BUY токена B ещё висит."""
     gate = asyncio.Event()
+    aave_sold = asyncio.Event()
     order: list[str] = []
+
+    def watch(entry: str) -> None:
+        if entry == "sell:AAVE":
+            aave_sold.set()
+
     adapters = {
         ProviderId.ONEINCH: RecordingAdapter(
             FakeAdapter(ProviderId.ONEINCH, clock, output_rule=arbitrage_rule("0.050", "20.00")),
             order,
             block_symbol="WETH",
             gate=gate,
+            on_record=watch,
         ),
         ProviderId.ZERO_X: RecordingAdapter(
             FakeAdapter(ProviderId.ZERO_X, clock, output_rule=arbitrage_rule("0.049", "20.30")),
             order,
+            on_record=watch,
         ),
     }
     harness = build_harness(
@@ -137,13 +151,7 @@ async def test_sell_of_one_token_does_not_wait_for_buy_of_another(
 
     task = asyncio.ensure_future(harness.scanner.scan())
     try:
-        for _ in range(500):
-            if any(entry == "sell:AAVE" for entry in order):
-                break
-            await asyncio.sleep(0)
-        assert any(entry == "sell:AAVE" for entry in order), (
-            "SELL для AAVE обязан выполниться, не дожидаясь BUY для WETH"
-        )
+        await asyncio.wait_for(aave_sold.wait(), timeout=5)
         # Цикл WETH заблокирован на BUY: до SELL он не дошёл, а SELL для
         # AAVE уже выполнен — циклы токенов действительно независимы.
         assert not any(entry == "sell:WETH" for entry in order)

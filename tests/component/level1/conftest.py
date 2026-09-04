@@ -24,7 +24,7 @@ from monik.domain.enums.fees import CostInclusion, FeeStatus, FeeType
 from monik.domain.enums.operations import OperationType
 from monik.domain.enums.providers import ProviderId
 from monik.domain.models.conversion import ConversionRate
-from monik.domain.models.fee import Fee
+from monik.domain.models.fee import Fee, FeeSnapshot
 from monik.domain.models.gas import Gas
 from monik.domain.models.job import Level2Job
 from monik.domain.models.opportunity import Opportunity
@@ -118,12 +118,29 @@ def arbitrage_rule(buy_rate: str, sell_rate: str) -> Callable[[QuoteRequest], in
 
 
 class StaticFeeSource:
-    """Комиссии, подтверждённо известные для обеих ног."""
+    """Комиссии, подтверждённо известные для обеих ног.
+
+    Реализует и ``FeeSource``, и ``FeeSnapshotSource``: Level 2 сохраняет
+    версионированный снимок комиссий.
+    """
 
     def __init__(self, *, amount: str = "0.10", fees: tuple[Fee, ...] | None = None) -> None:
         self._amount = amount
         self._fees = fees
         self.calls: list[FeeContext] = []
+        self.snapshot_calls: list[FeeContext] = []
+
+    async def snapshot_for(self, context: FeeContext) -> FeeSnapshot:
+        self.snapshot_calls.append(context)
+        return FeeSnapshot(
+            snapshot_id=context.cache_key()[:64],
+            provider_id=context.provider_id,
+            network_id=context.network_id,
+            operation=context.operation,
+            fees=await self.fees_for(context),
+            version=1,
+            created_at=f.NOW,
+        )
 
     async def fees_for(self, context: FeeContext) -> tuple[Fee, ...]:
         self.calls.append(context)
