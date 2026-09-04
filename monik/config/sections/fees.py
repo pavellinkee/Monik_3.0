@@ -66,6 +66,10 @@ class GasConfig(ConfigSection):
     freshness_seconds: int = Field(default=60, ge=1, le=3600)
     request_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
     treat_unknown_as_zero: bool = False
+    #: Явно заданная цена газа в wei по сетям. Используется только при
+    #: источнике ``STATIC``: это явно настроенный fallback, а не
+    #: production-источник данных.
+    static_wei_per_gas: dict[str, int] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _validate(self) -> Self:
@@ -75,6 +79,10 @@ class GasConfig(ConfigSection):
             raise ValueError("at least one gas source must be configured")
         if len(set(self.sources)) != len(self.sources):
             raise ValueError("gas sources must be unique")
+        if GasSource.STATIC in self.sources and not self.static_wei_per_gas:
+            raise ValueError("static gas source requires static_wei_per_gas")
+        if any(value <= 0 for value in self.static_wei_per_gas.values()):
+            raise ValueError("static gas price must be positive")
         return self
 
 

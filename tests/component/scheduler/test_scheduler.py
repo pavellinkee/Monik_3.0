@@ -16,7 +16,11 @@ from monik.domain.enums.lifecycle import TaskExecutionStatus
 from monik.domain.enums.resources import RequestPriority
 from monik.domain.enums.scheduler import OverlapPolicy, TaskMode
 from monik.domain.errors import ConfigurationError, ProviderError
-from monik.domain.models.scheduler import SchedulerExecution, SchedulerTask
+from monik.domain.models.scheduler import (
+    SchedulerExecution,
+    SchedulerTask,
+    SchedulerTaskState,
+)
 from monik.services.observability import FakeClock
 from monik.services.scheduler import (
     RegisteredTask,
@@ -431,11 +435,15 @@ def test_duplicate_registration_is_rejected() -> None:
 
 
 class RecordingLog:
-    """Журнал запусков в памяти."""
+    """Персистентное расписание и журнал запусков в памяти."""
 
     def __init__(self, last: SchedulerExecution | None = None) -> None:
         self.records: list[SchedulerExecution] = []
+        self.tasks: dict[str, SchedulerTaskState] = {}
         self._last = last
+
+    async def upsert_task(self, state: SchedulerTaskState, *, updated_at: datetime) -> None:
+        self.tasks[state.task_id] = state
 
     async def record_execution(self, execution: SchedulerExecution) -> None:
         self.records.append(execution)
@@ -458,6 +466,8 @@ async def test_executions_are_recorded(clock: FakeClock) -> None:
     await scheduler.tick()
 
     assert [record.status for record in log.records] == [TaskExecutionStatus.SUCCESS]
+    # Задача сохранена до записи запуска: журнал ссылается на неё.
+    assert "level1_scan" in log.tasks
 
 
 async def test_schedule_resumes_from_the_last_successful_run(clock: FakeClock) -> None:

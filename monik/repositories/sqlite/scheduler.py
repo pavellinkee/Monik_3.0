@@ -6,40 +6,13 @@ import aiosqlite
 
 from monik.domain.enums.lifecycle import TaskExecutionStatus
 from monik.domain.enums.scheduler import TaskMode
-from monik.domain.models.scheduler import SchedulerExecution
+from monik.domain.models.scheduler import SchedulerExecution, SchedulerTaskState
 from monik.domain.value_objects.timestamps import UtcDatetime
 from monik.infrastructure.db.connection import Database
 from monik.infrastructure.db.types import from_json, from_timestamp, to_json, to_timestamp
 from monik.repositories.sqlite.mapping import column, optional_column
 
 __all__ = ["SchedulerTaskState", "SqliteSchedulerRepository"]
-
-
-class SchedulerTaskState:
-    """Сохранённое состояние задачи планировщика.
-
-    Хранится минимум, необходимый для восстановления расписания после
-    рестарта (``30_DATABASE_SCHEMA.md`` §53).
-    """
-
-    __slots__ = ("enabled", "last_run_at", "mode", "next_run_at", "schedule", "task_id")
-
-    def __init__(
-        self,
-        task_id: str,
-        mode: TaskMode,
-        *,
-        enabled: bool,
-        schedule: dict[str, object],
-        last_run_at: UtcDatetime | None = None,
-        next_run_at: UtcDatetime | None = None,
-    ) -> None:
-        self.task_id = task_id
-        self.mode = mode
-        self.enabled = enabled
-        self.schedule = schedule
-        self.last_run_at = last_run_at
-        self.next_run_at = next_run_at
 
 
 class SqliteSchedulerRepository:

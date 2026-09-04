@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import time, timedelta
-from typing import Self
+from typing import Any, Self
 
 from pydantic import Field, model_validator
 
@@ -13,7 +13,7 @@ from monik.domain.enums.scheduler import OverlapPolicy, TaskMode
 from monik.domain.models.base import DomainModel
 from monik.domain.value_objects.timestamps import UtcDatetime
 
-__all__ = ["SchedulerExecution", "SchedulerTask"]
+__all__ = ["SchedulerExecution", "SchedulerTask", "SchedulerTaskState"]
 
 
 class SchedulerTask(DomainModel):
@@ -74,3 +74,18 @@ class SchedulerExecution(DomainModel):
         ):
             raise ValueError("execution finished_at must not precede started_at")
         return self
+
+
+class SchedulerTaskState(DomainModel):
+    """Сохранённое состояние задачи планировщика.
+
+    Хранится минимум, необходимый для восстановления расписания после
+    рестарта (``30_DATABASE_SCHEMA.md`` §53, ``14_SCHEDULER.md`` §57).
+    """
+
+    task_id: str = Field(min_length=1, max_length=64)
+    mode: TaskMode
+    enabled: bool = True
+    schedule: dict[str, Any] = Field(default_factory=dict)
+    last_run_at: UtcDatetime | None = None
+    next_run_at: UtcDatetime | None = None

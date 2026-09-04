@@ -46,12 +46,17 @@ from monik.domain.models.quote import Quote
 from monik.domain.models.resource import ResourceKey, ResourceRequest, ResourceResult
 from monik.domain.models.route import Route, RouteStep
 from monik.domain.models.scan import Scan, ScanScope, ScanStatistics
-from monik.domain.models.scheduler import SchedulerExecution, SchedulerTask
+from monik.domain.models.scheduler import (
+    SchedulerExecution,
+    SchedulerTask,
+    SchedulerTaskState,
+)
 from monik.domain.models.token import Token, TokenKey
 from monik.domain.models.transitions import StateTransitionRecord
 
 __all__ = [
     "AmountSnapshot",
+    "SchedulerTaskState",
     "StateTransitionRecord",
     "ConfirmationSnapshot",
     "PROFIT_FORMULA_VERSION",

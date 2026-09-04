@@ -17,7 +17,11 @@ from typing import Protocol, runtime_checkable
 
 from monik.domain.enums.lifecycle import TaskExecutionStatus
 from monik.domain.enums.scheduler import OverlapPolicy, TaskMode
-from monik.domain.models.scheduler import SchedulerExecution
+from monik.domain.models.scheduler import (
+    SchedulerExecution,
+    SchedulerTask,
+    SchedulerTaskState,
+)
 from monik.services.observability.clock import Clock
 from monik.services.observability.logging import get_logger, log_fields
 from monik.services.scheduler.registry import RegisteredTask, TaskRegistry
@@ -31,7 +35,11 @@ _LOGGER = get_logger("services.scheduler")
 
 @runtime_checkable
 class ExecutionLog(Protocol):
-    """Журнал запусков задач."""
+    """Персистентное расписание и журнал запусков (``14_SCHEDULER.md`` §57)."""
+
+    async def upsert_task(self, state: SchedulerTaskState, *, updated_at: datetime) -> None:
+        """Сохранить состояние задачи."""
+        ...
 
     async def record_execution(self, execution: SchedulerExecution) -> None:
         """Сохранить запись о запуске."""
@@ -70,6 +78,7 @@ class Scheduler:
             planned = next_run_at(item.task, now=now, last_run_at=last_run)
             if planned is not None:
                 self._next_runs[item.task.task_id] = planned
+            await self._persist(item, last_run_at=last_run, next_run_at=planned, now=now)
 
     async def run_startup(self) -> tuple[ExecutionOutcome, ...]:
         """Выполнить startup-задачи в порядке зависимостей (§36).
@@ -145,6 +154,29 @@ class Scheduler:
             planned = max(planned, completed_at)
         self._next_runs[item.task.task_id] = planned
 
+    async def _persist(
+        self,
+        item: RegisteredTask,
+        *,
+        last_run_at: datetime | None,
+        next_run_at: datetime | None,
+        now: datetime,
+    ) -> None:
+        """Сохранить состояние задачи: журнал запусков ссылается на неё."""
+        if self.log is None:
+            return
+        await self.log.upsert_task(
+            SchedulerTaskState(
+                task_id=item.task.task_id,
+                mode=item.task.mode,
+                enabled=item.task.enabled,
+                schedule=_schedule_snapshot(item.task),
+                last_run_at=last_run_at,
+                next_run_at=next_run_at,
+            ),
+            updated_at=now,
+        )
+
     async def _last_success(self, task_id: str) -> datetime | None:
         """Момент последнего успешного выполнения из журнала."""
         if self.log is None:
@@ -157,3 +189,15 @@ class Scheduler:
     def has_startup_tasks(self) -> bool:
         """Есть ли задачи, выполняемые при старте."""
         return any(item.task.mode is TaskMode.STARTUP for item in self.registry.enabled())
+
+
+def _schedule_snapshot(task: SchedulerTask) -> dict[str, object]:
+    """Снимок расписания задачи для persistence."""
+    return {
+        "overlap_policy": task.overlap_policy.value,
+        "priority": task.priority.value,
+        "interval_seconds": task.interval.total_seconds() if task.interval else None,
+        "interval_days": task.interval_days,
+        "at_time": task.at_time.isoformat() if task.at_time else None,
+        "timezone": task.timezone_name,
+    }

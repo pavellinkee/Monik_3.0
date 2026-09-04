@@ -137,9 +137,13 @@ fees:
 # Gas и цены подключаются независимыми реализациями Provider (решение D-4).
 gas:
   enabled: true
+  # adapter_estimate — gas units из маршрута; rpc — цена газа из узла сети.
+  # static используется только как явно настроенный fallback.
   sources: [adapter_estimate, rpc]
   freshness_seconds: 60
   request_timeout_seconds: 5.0
+  # static_wei_per_gas:
+  #   polygon: 120000000000
 
 prices:
   enabled: true
