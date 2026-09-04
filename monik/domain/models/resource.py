@@ -23,19 +23,32 @@ class ResourceKey(DomainModel):
 
     Лимиты иерархичны: provider, provider+network, provider+network+operation
     (``12_RESOURCE_MANAGER.md`` §72).
+
+    Владельцем ресурса является не только aggregator: через Resource Manager
+    проходят также blockchain RPC, gas и price API, Telegram
+    (``01_PROJECT_REQUIREMENTS.md`` §34). Поэтому владелец задаётся либо
+    ``ProviderId``, либо стабильным строковым именем ресурса — например
+    ``"rpc"`` или ``"telegram"``.
     """
 
-    provider_id: ProviderId
+    provider_id: ProviderId | str
     network_id: NetworkId | None = None
     operation: CapabilityOperation | None = None
 
     def __str__(self) -> str:
-        parts = [self.provider_id.value]
+        parts = [self._owner_name]
         if self.network_id is not None:
             parts.append(str(self.network_id))
         if self.operation is not None:
             parts.append(self.operation.value)
         return "/".join(parts)
+
+    @property
+    def _owner_name(self) -> str:
+        """Строковое имя владельца ресурса."""
+        return (
+            self.provider_id.value if isinstance(self.provider_id, ProviderId) else self.provider_id
+        )
 
     def parents(self) -> tuple[ResourceKey, ...]:
         """Родительские ключи от общего к частному (без самого себя)."""
