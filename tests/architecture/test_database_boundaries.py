@@ -122,6 +122,44 @@ def test_transaction_never_wraps_external_call(path: pathlib.Path) -> None:
                 )
 
 
+HTTP_ALLOWED_PREFIXES = ("infrastructure/http",)
+
+HTTP_LIBRARIES = frozenset({"httpx", "requests", "aiohttp", "urllib3"})
+
+
+def _is_http_layer(path: pathlib.Path) -> bool:
+    relative = _relative(path)
+    return any(relative.startswith(prefix) for prefix in HTTP_ALLOWED_PREFIXES)
+
+
+NON_HTTP_FILES = [path for path in ALL_FILES if not _is_http_layer(path)]
+
+
+@pytest.mark.parametrize("path", NON_HTTP_FILES, ids=_relative)
+def test_http_library_is_not_imported_outside_http_layer(path: pathlib.Path) -> None:
+    """Business logic не импортирует HTTP-библиотеки (25 §62)."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        modules: list[str] = []
+        if isinstance(node, ast.Import):
+            modules = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            modules = [node.module]
+        for module in modules:
+            root = module.split(".")[0]
+            assert root not in HTTP_LIBRARIES, (
+                f"{_relative(path)} imports {module}; external requests must go through "
+                "the http infrastructure and the resource manager"
+            )
+
+
+def test_tls_verification_is_never_disabled() -> None:
+    """Отключение проверки TLS запрещено (06 §79)."""
+    for path in ALL_FILES:
+        source = path.read_text(encoding="utf-8")
+        assert "verify=False" not in source, f"{_relative(path)} disables TLS verification"
+
+
 def test_database_layer_exists() -> None:
     assert (PACKAGE_ROOT / "infrastructure" / "db" / "connection.py").is_file()
 

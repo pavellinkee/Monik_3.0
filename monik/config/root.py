@@ -19,6 +19,7 @@ from monik.config.sections import (
     DatabaseConfig,
     FeeConfig,
     GasConfig,
+    HttpConfig,
     LoggingConfig,
     MetricsConfig,
     NetworkConfig,
@@ -60,6 +61,7 @@ class Configuration(ConfigSection):
     fees: FeeConfig = FeeConfig()
     gas: GasConfig = GasConfig()
     prices: PriceConfig = PriceConfig()
+    http: HttpConfig = HttpConfig()
     resources: ResourceConfig = ResourceConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
     notifications: NotificationConfig = NotificationConfig()

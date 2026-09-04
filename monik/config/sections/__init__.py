@@ -10,6 +10,7 @@ from monik.config.sections.fees import (
     PriceConfig,
     PriceSource,
 )
+from monik.config.sections.http import HttpConfig
 from monik.config.sections.networks import NetworkConfig
 from monik.config.sections.notifications import NotificationConfig, TelegramConfig
 from monik.config.sections.observability import LoggingConfig, LogLevel, MetricsConfig
@@ -34,6 +35,7 @@ __all__ = [
     "FeeConfig",
     "GasConfig",
     "GasSource",
+    "HttpConfig",
     "Level1Config",
     "Level2Config",
     "LogLevel",

@@ -206,3 +206,39 @@ class TestStructuredLogFormat:
 def teardown_module() -> None:
     """Вернуть логирование в исходное состояние после модуля."""
     logging.getLogger("monik").handlers.clear()
+
+
+class TestHttpDoesNotLeakCredentials:
+    """Заголовок авторизации не должен попадать в логи (06 §66)."""
+
+    def test_authorization_header_is_redacted_in_logs(self, registry: SecretRegistry) -> None:
+        from monik.infrastructure.http import HttpRequest
+        from monik.services.observability import log_fields
+
+        stream = io.StringIO()
+        configure_logging(level="INFO", stream=stream, registry=registry)
+        request = HttpRequest(
+            method="GET",
+            url="https://api.example.com/quote",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+        )
+        get_logger("test.http").info(
+            "sending request",
+            extra=log_fields(url=request.url, headers=request.headers),
+        )
+        output = stream.getvalue()
+        assert API_KEY not in output
+        assert "api.example.com" in output
+
+    def test_request_repr_is_not_logged_raw(self, registry: SecretRegistry) -> None:
+        from monik.infrastructure.http import HttpRequest
+
+        stream = io.StringIO()
+        configure_logging(level="DEBUG", stream=stream, registry=registry)
+        request = HttpRequest(
+            method="GET",
+            url="https://api.example.com/quote",
+            headers={"x-api-key": API_KEY},
+        )
+        get_logger("test.http").debug("request %s", request)
+        assert API_KEY not in stream.getvalue()
