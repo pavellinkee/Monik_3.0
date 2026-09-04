@@ -12,10 +12,10 @@
 |---|---|
 | Дата обновления | 2026-09-04 |
 | Ветка | `claude/monik-implementation` |
-| Последний завершённый этап | **S4 — SQLite, schema, migrations, transactions** |
-| Следующий этап | **S5 — Repositories** |
+| Последний завершённый этап | **S5 — Repositories** |
+| Следующий этап | **S6 — Token / Network / Provider / Capability registries** |
 | Статус разработки | ▶ идёт автономная разработка по DEVELOPMENT_PLAN.md |
-| Тесты | 997 passed |
+| Тесты | 1105 passed |
 | Проверки | ruff ✅ · ruff format ✅ · mypy --strict ✅ · pytest ✅ |
 
 ---
@@ -218,6 +218,35 @@ Architecture-тесты: драйвер SQLite и raw SQL не использу�
 
 ---
 
+### S5 — Repositories ✅
+
+**Миграция 0002:** `preliminary_result_json` и `buy_output_decimals` для
+`opportunity_amounts`; `buy_quote_json` и `sell_quote_json` для
+`level2_amount_results`. Decimals промежуточного токена хранятся явно.
+
+**Реализовано (`monik/repositories/`):**
+- интерфейсы-Protocol в `interfaces/`, реализации в `sqlite/`;
+- `SqliteIdSequenceRepository` — монотонные `#V` и `#K` в раздельных
+  пространствах, переживают рестарт;
+- `SqliteScanRepository` — метаданные и статистика циклов, cleanup только
+  завершённых;
+- `SqliteOpportunityRepository` — **атомарное** создание Opportunity +
+  amount-контекстов + Level 2 Job, поиск по `#V`, дедупликация по
+  fingerprint в окне, выборки по статусу и истечению;
+- `SqliteJobRepository` — Job, попытки, per-amount результаты; котировки
+  сохраняются только для проверенных сумм как подтверждение решения;
+- `SqliteNotificationRepository` — очередь по `created_at + sequence`,
+  logical identity `opportunity + destination`, тексты для кнопки «об»;
+- `SqliteFeeRepository` / `SqliteGasRepository` — снимки с сохранением
+  UNKNOWN без суммы, контекстная выборка, retention;
+- `SqliteCapabilityRepository`, `SqliteSchedulerRepository`,
+  `SqliteStateTransitionRepository`.
+
+**Тестирование:** `pytest` ✅ **1105 passed**; `ruff` ✅ · `ruff format` ✅ ·
+`mypy --strict` ✅ (123 модуля).
+
+---
+
 ## GIT COMMITS
 
 | Этап | Commit | Описание |
@@ -233,6 +262,9 @@ Architecture-тесты: драйвер SQLite и raw SQL не использу�
 | S3 | `d4f9803` | `feat: implement configuration loading, validation and secret references` |
 | S3 | `93b2df1` | `docs: update development status after stage S3` |
 | S4 | `0660ba8` | `feat: add sqlite infrastructure, schema migrations and transaction manager` |
+| S4 | `c69065e` | `docs: update development status after stage S4` |
+| S5 | `19503b8` | `feat: add core repositories for scans, opportunities and level 2 jobs` |
+| S5 | `780d2a6` | `feat: add notification, fee, gas, capability, scheduler and audit repositories` |
 
 ---
 
@@ -247,8 +279,8 @@ Architecture-тесты: драйвер SQLite и raw SQL не использу�
 | S2 | Errors, Clock, structured logging + redaction | ✅ |
 | S3 | Configuration subsystem | ✅ |
 | S4 | SQLite, schema, migrations, transactions | ✅ |
-| S5 | Repositories | 🔜 следующий |
-| S6 | Token/Network/Provider/Capability registries | ⬜ |
+| S5 | Repositories | ✅ |
+| S6 | Token/Network/Provider/Capability registries | 🔜 следующий |
 | S7 | HTTP infrastructure (TLS, SSRF, limits) | ⬜ |
 | S8 | Resource Manager | ⬜ |
 | S9.0 | Adapter contract + contract test suite + FakeAdapter | ⬜ |
@@ -295,27 +327,25 @@ Telegram API заблокированы egress-политикой; ключей 
 
 ## СЛЕДУЮЩИЙ ШАГ
 
-**S5 — Repositories** согласно `DEVELOPMENT_PLAN.md` §5.
+**S6 — Registries** согласно `DEVELOPMENT_PLAN.md` §5.
 
-Что нужно сделать:
-- интерфейсы (Protocol) в `monik/repositories/interfaces/` и реализации в
-  `monik/repositories/sqlite/`: `ScanRepository`, `OpportunityRepository`,
-  `JobRepository`, `NotificationRepository`, `FeeRepository`,
-  `GasRepository`, `CapabilityRepository`, `SchedulerRepository`,
-  `StateTransitionRepository`, `IdSequenceRepository` (выдача `#V`/`#K`
-  и sequence уведомлений);
-- mapping domain ↔ database через `monik.infrastructure.db.types`
-  (Decimal и raw amounts — TEXT, timestamps — ISO-8601 UTC);
-- атомарная операция `create_opportunity_with_job()` — Opportunity +
-  amount-контексты + Level2Job в одной транзакции (CLAUDE.md §29);
-- recovery-запросы: активные и зависшие jobs (`RUNNING` после краха),
-  pending notifications, истёкшие opportunities.
+Что нужно сделать (`monik/services/registries/`):
+- `NetworkRegistry` — enabled сети, chain_id, native token;
+- `TokenRegistry` — authoritative token metadata (symbol, address, decimals,
+  network, enabled), нормализация адресов, выбор Top-N; источник —
+  configuration, hard-code списка запрещён;
+- `ProviderRegistry` — регистрация Adapter'ов и enabled-состояние;
+- `CapabilityRegistry` — состояния `SUPPORTED/UNSUPPORTED/UNKNOWN/DEGRADED/
+  UNAVAILABLE/STALE/CHECKING/FAILED`, freshness, persistence через
+  `SqliteCapabilityRepository`, failure/recovery thresholds, change detection.
 
-Схема уже создана в S4 — перечитывать документацию не требуется, достаточно
-`monik/infrastructure/db/migrations/m0001_initial.py`.
+Ключевые правила (уже зафиксированы): `UNKNOWN ≠ SUPPORTED` · discovery
+выполняется только на startup и по расписанию, не перед каждым scan ·
+runtime-ошибка не переводит capability в `UNSUPPORTED` мгновенно ·
+Circuit Breaker **не меняет** Capability Registry · статические запросы
+не делают сетевых вызовов.
 
-Обязательные тесты этапа: CRUD каждого репозитория, фильтрация, pagination,
-дедупликация по fingerprint, enforcement UNIQUE, rollback, сохранение
-точности Decimal при round-trip, атомарность `opportunity + amounts + job`,
-recovery-запросы. Architecture-тест уже гарантирует, что SQL остаётся только
-в `repositories/sqlite` и `infrastructure/db`.
+Обязательные тесты этапа: identity токена, нормализация адресов, фильтрация
+disabled, capability lookup и freshness, обработка STALE, пороги деградации
+и восстановления, запрет мгновенного permanent disable, отсутствие сетевых
+вызовов при статических запросах.
