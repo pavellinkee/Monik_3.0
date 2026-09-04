@@ -10,11 +10,18 @@ from monik.services.observability.context import (
     current_context,
     log_context,
 )
+from monik.services.observability.events import TransitionLog, TransitionRecorder
 from monik.services.observability.logging import (
     StructuredFormatter,
     configure_logging,
     get_logger,
     log_fields,
+)
+from monik.services.observability.metrics import (
+    ALLOWED_LABELS,
+    MetricSample,
+    MetricsRegistry,
+    TimingStats,
 )
 from monik.services.observability.redaction import (
     REDACTED,
@@ -25,13 +32,19 @@ from monik.services.observability.redaction import (
 )
 
 __all__ = [
+    "ALLOWED_LABELS",
     "REDACTED",
     "Clock",
     "CorrelationContext",
     "FakeClock",
+    "MetricSample",
+    "MetricsRegistry",
     "SecretRegistry",
     "StructuredFormatter",
     "SystemClock",
+    "TimingStats",
+    "TransitionLog",
+    "TransitionRecorder",
     "configure_logging",
     "current_context",
     "get_logger",

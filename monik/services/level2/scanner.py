@@ -30,9 +30,11 @@ from monik.domain.value_objects.timestamps import UtcDatetime
 from monik.services.level2.amounts import AmountVerifier
 from monik.services.level2.confirmation import job_status_for, opportunity_status_for
 from monik.services.level2.ports import JobStore, OpportunityRegistry
+from monik.services.observability import names
 from monik.services.observability.clock import Clock
 from monik.services.observability.context import log_context
 from monik.services.observability.logging import get_logger, log_fields
+from monik.services.observability.metrics import MetricsRegistry
 
 __all__ = ["Level2Scanner"]
 
@@ -50,12 +52,14 @@ class Level2Scanner:
         jobs: JobStore,
         opportunities: OpportunityRegistry,
         clock: Clock,
+        metrics: MetricsRegistry | None = None,
     ) -> None:
         self._config = config
         self._verifier = verifier
         self._jobs = jobs
         self._opportunities = opportunities
         self._clock = clock
+        self._metrics = metrics
 
     async def confirm(self, job: Level2Job) -> ConfirmationResult:
         """Проверить Job и вернуть результат.
@@ -164,6 +168,7 @@ class Level2Scanner:
             if opportunity_status in {OpportunityStatus.CONFIRMED, OpportunityStatus.PARTIAL}
             else None,
         )
+        self._record_metrics(result, started_at=started_at, completed_at=completed_at)
         _LOGGER.info(
             "level 2 confirmation finished",
             extra=log_fields(
@@ -195,6 +200,28 @@ class Level2Scanner:
             for amount in opportunity.amounts
         )
         return await self._finish(job, opportunity, results, revision, started_at=now)
+
+    def _record_metrics(
+        self,
+        result: ConfirmationResult,
+        *,
+        started_at: UtcDatetime,
+        completed_at: UtcDatetime,
+    ) -> None:
+        """Метрики подтверждения (``28_OBSERVABILITY.md`` §31).
+
+        Идентификаторы ``#K`` и ``#V`` в labels не попадают (``28`` §42).
+        """
+        if self._metrics is None:
+            return
+        self._metrics.increment(names.LEVEL2_JOBS, status=result.job_status.value)
+        for amount in result.amount_results:
+            self._metrics.increment(names.LEVEL2_AMOUNTS, status=amount.status.value)
+        self._metrics.observe(
+            names.LEVEL2_SECONDS,
+            (completed_at - started_at).total_seconds(),
+            status=result.job_status.value,
+        )
 
     async def _fail_all_amounts(
         self,

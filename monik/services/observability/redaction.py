@@ -124,6 +124,15 @@ class SecretRegistry:
         """Очистить реестр (используется в тестах и при reload конфигурации)."""
         self._values.clear()
 
+    def contains(self, text: str) -> bool:
+        """Содержит ли текст зарегистрированный секрет.
+
+        Нужен там, где секрет нельзя вычёркивать, а можно только отклонить
+        значение целиком — например в metric labels
+        (``28_OBSERVABILITY.md`` §43).
+        """
+        return any(value in text for value in self._values)
+
     def __len__(self) -> int:
         return len(self._values)
 

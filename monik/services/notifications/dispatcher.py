@@ -30,9 +30,11 @@ from monik.services.notifications.ports import (
     NotificationTransport,
     OutgoingMessage,
 )
+from monik.services.observability import names
 from monik.services.observability.clock import Clock
 from monik.services.observability.context import log_context
 from monik.services.observability.logging import get_logger, log_fields
+from monik.services.observability.metrics import MetricsRegistry
 
 __all__ = ["DeliveryReport", "NotificationDispatcher", "details_callback_data"]
 
@@ -78,12 +80,14 @@ class NotificationDispatcher:
         transports: dict[str, NotificationTransport],
         clock: Clock,
         jitter: random.Random | None = None,
+        metrics: MetricsRegistry | None = None,
     ) -> None:
         self._config = config
         self._store = store
         self._transports = transports
         self._clock = clock
         self._random = jitter or random.Random(0)
+        self._metrics = metrics
 
     async def dispatch_pending(self, *, limit: int | None = None) -> DeliveryReport:
         """Обработать очередь в порядке формирования уведомлений."""
@@ -190,6 +194,7 @@ class NotificationDispatcher:
                 attempt_count=attempt_number,
             )
             report.delivered.append(notification.notification_id)
+            self._count(outcome="delivered")
             return
 
         kind = receipt.error_kind or DeliveryErrorKind.UNKNOWN_ERROR
@@ -227,8 +232,10 @@ class NotificationDispatcher:
         )
         if retryable:
             report.retried.append(notification.notification_id)
+            self._count(outcome="retried")
         else:
             report.failed.append(notification.notification_id)
+            self._count(outcome="failed")
 
     async def _fail(
         self,
@@ -259,6 +266,15 @@ class NotificationDispatcher:
             extra=log_fields(error_kind=kind.value, detail=detail),
         )
         report.failed.append(notification.notification_id)
+        self._count(outcome="failed")
+
+    def _count(self, *, outcome: str) -> None:
+        """Метрика доставки (``28_OBSERVABILITY.md`` §37).
+
+        Идентификатор уведомления в labels не попадает (``28`` §42).
+        """
+        if self._metrics is not None:
+            self._metrics.increment(names.NOTIFICATIONS, outcome=outcome)
 
     async def _record(
         self,

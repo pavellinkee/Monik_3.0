@@ -33,13 +33,15 @@ from monik.services.level1.ports import (
     ScanStore,
 )
 from monik.services.level1.preliminary import PreliminaryEvaluator
-from monik.services.level1.quotes import QuoteCollector
+from monik.services.level1.quotes import QuoteCollector, QuoteStatistics
 from monik.services.level1.ranking import rank_groups
 from monik.services.level1.results import ScanResult
 from monik.services.level1.scope import ScopeBuilder
+from monik.services.observability import names
 from monik.services.observability.clock import Clock
 from monik.services.observability.context import log_context
 from monik.services.observability.logging import get_logger, log_fields
+from monik.services.observability.metrics import MetricsRegistry
 
 __all__ = ["Level1Scanner"]
 
@@ -62,6 +64,7 @@ class Level1Scanner:
         sequences: IdSequenceSource,
         dispatcher: Level2Dispatcher,
         clock: Clock,
+        metrics: MetricsRegistry | None = None,
     ) -> None:
         self._configuration = configuration
         self._adapters = adapters
@@ -73,6 +76,7 @@ class Level1Scanner:
         self._sequences = sequences
         self._dispatcher = dispatcher
         self._clock = clock
+        self._metrics = metrics
 
     async def scan(self, scope: ScanScope | None = None) -> ScanResult:
         """Выполнить цикл.
@@ -281,6 +285,7 @@ class Level1Scanner:
             ),
         )
         await self._scans.update(finished)
+        self._record_metrics(finished, statistics)
         _LOGGER.info(
             "level 1 scan finished",
             extra=log_fields(
@@ -292,6 +297,33 @@ class Level1Scanner:
             ),
         )
         return finished
+
+    def _record_metrics(self, scan: Scan, statistics: QuoteStatistics) -> None:
+        """Записать метрики цикла (``28_OBSERVABILITY.md`` §30).
+
+        В labels попадают только low-cardinality значения: идентификаторы
+        цикла и возможностей туда не входят (``28`` §42).
+        """
+        if self._metrics is None:
+            return
+        self._metrics.increment(names.LEVEL1_SCANS, status=scan.status.value)
+        self._metrics.increment(
+            names.LEVEL1_QUOTE_REQUESTS, amount=statistics.requests, status="total"
+        )
+        self._metrics.increment(
+            names.LEVEL1_QUOTE_FAILURES, amount=statistics.failed, status="failed"
+        )
+        self._metrics.increment(
+            names.LEVEL1_OPPORTUNITIES,
+            amount=scan.statistics.opportunities_created,
+            status="created",
+        )
+        if scan.finished_at is not None:
+            self._metrics.observe(
+                names.LEVEL1_SCAN_SECONDS,
+                (scan.finished_at - scan.started_at).total_seconds(),
+                status=scan.status.value,
+            )
 
 
 def _passes_preliminary_threshold(candidate: Candidate) -> bool:

@@ -6,29 +6,13 @@ import uuid
 
 import aiosqlite
 
-from monik.domain.models.base import DomainModel
+from monik.domain.models.transitions import StateTransitionRecord
 from monik.domain.value_objects.timestamps import UtcDatetime
 from monik.infrastructure.db.connection import Database
 from monik.infrastructure.db.types import from_timestamp, to_timestamp
 from monik.repositories.sqlite.mapping import column, optional_column
 
 __all__ = ["SqliteStateTransitionRepository", "StateTransitionRecord"]
-
-
-class StateTransitionRecord(DomainModel):
-    """Зафиксированный переход состояния (``35_STATE_MACHINES.md`` §118).
-
-    Каждый критический переход наблюдаем: сущность, предыдущее и новое
-    состояние, момент, машиночитаемая причина и correlation id.
-    """
-
-    entity_type: str
-    entity_id: str
-    from_state: str | None
-    to_state: str
-    reason: str
-    occurred_at: UtcDatetime
-    correlation_id: str | None = None
 
 
 class SqliteStateTransitionRepository:

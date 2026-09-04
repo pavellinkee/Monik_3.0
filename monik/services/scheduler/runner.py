@@ -20,9 +20,11 @@ from monik.domain.enums.lifecycle import TaskExecutionStatus
 from monik.domain.enums.scheduler import OverlapPolicy
 from monik.domain.errors import MonikError
 from monik.domain.models.scheduler import SchedulerExecution
+from monik.services.observability import names
 from monik.services.observability.clock import Clock
 from monik.services.observability.context import log_context
 from monik.services.observability.logging import get_logger, log_fields
+from monik.services.observability.metrics import MetricsRegistry
 from monik.services.scheduler.registry import RegisteredTask
 
 __all__ = ["ExecutionOutcome", "TaskRunner"]
@@ -51,8 +53,9 @@ class ExecutionOutcome:
 class TaskRunner:
     """Запускает задачи, соблюдая overlap policy и timeout."""
 
-    def __init__(self, clock: Clock) -> None:
+    def __init__(self, clock: Clock, metrics: MetricsRegistry | None = None) -> None:
         self._clock = clock
+        self._metrics = metrics
         self._running: dict[str, asyncio.Task[None]] = {}
 
     def is_running(self, task_id: str) -> bool:
@@ -146,15 +149,26 @@ class TaskRunner:
         error_code: str | None,
         error: BaseException | None = None,
     ) -> ExecutionOutcome:
+        finished_at = self._clock.now()
         execution = SchedulerExecution(
             execution_id=str(uuid.uuid4()),
             task_id=item.task.task_id,
             status=status,
             scheduled_for=scheduled_for,
             started_at=started_at,
-            finished_at=self._clock.now(),
+            finished_at=finished_at,
             error_code=error_code,
         )
+        if self._metrics is not None:
+            # Идентификатор задачи — low-cardinality label (``28`` §41).
+            self._metrics.increment(
+                names.SCHEDULER_EXECUTIONS, task=item.task.task_id, status=status.value
+            )
+            self._metrics.observe(
+                names.SCHEDULER_SECONDS,
+                (finished_at - started_at).total_seconds(),
+                task=item.task.task_id,
+            )
         return ExecutionOutcome(execution=execution, error=error)
 
     def _execution(

@@ -47,7 +47,7 @@ from monik.services.level1 import (
     PreliminaryEvaluator,
     ScopeBuilder,
 )
-from monik.services.observability import FakeClock
+from monik.services.observability import FakeClock, MetricsRegistry
 from monik.services.registries import (
     CapabilityRegistry,
     NetworkRegistry,
@@ -246,6 +246,7 @@ def build_harness(
     gas: StaticGasSource | None = None,
     rates: StaticRateSource | None = None,
     dispatcher: RecordingDispatcher | None = None,
+    metrics: MetricsRegistry | None = None,
 ) -> Level1Harness:
     """Собрать Level 1 со всеми зависимостями."""
     networks = NetworkRegistry(configuration)
@@ -291,6 +292,7 @@ def build_harness(
         sequences=SqliteIdSequenceRepository(database),
         dispatcher=level2,
         clock=clock,
+        metrics=metrics,
     )
     return Level1Harness(
         scanner=scanner,
