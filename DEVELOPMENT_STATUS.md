@@ -12,10 +12,10 @@
 |---|---|
 | Дата обновления | 2026-09-04 |
 | Ветка | `claude/monik-implementation` |
-| Последний завершённый этап | **S5 — Repositories** |
-| Следующий этап | **S6 — Token / Network / Provider / Capability registries** |
+| Последний завершённый этап | **S6 — Registries** |
+| Следующий этап | **S7 — HTTP infrastructure (TLS, SSRF, limits)** |
 | Статус разработки | ▶ идёт автономная разработка по DEVELOPMENT_PLAN.md |
-| Тесты | 1105 passed |
+| Тесты | 1157 passed |
 | Проверки | ruff ✅ · ruff format ✅ · mypy --strict ✅ · pytest ✅ |
 
 ---
@@ -247,6 +247,34 @@ Architecture-тесты: драйвер SQLite и raw SQL не использу�
 
 ---
 
+### S6 — Registries ✅
+
+**Реализовано (`monik/services/registries/`):**
+- `NetworkRegistry` — сети из конфигурации, enabled-фильтр, RPC endpoint,
+  canonical identity обёрнутого native token (поле стало обязательным
+  в доменной модели `Network`);
+- `TokenRegistry` — authoritative metadata, поиск по canonical identity и по
+  адресу без учёта регистра, `decimals` только отсюда, поиск по символу
+  возвращает набор, Top-N набор для сканирования без базового токена;
+- `ProviderRegistry` — enabled-состояние, объявленные сети (не подтверждение
+  поддержки), допустимые пары BUY/SELL;
+- `CapabilityRegistry` — свежесть (`SUPPORTED → STALE`), persistence и
+  загрузка при старте, discovery, пороги подряд идущих отказов, снимок и
+  список устаревших ключей.
+
+Добавлена секция конфигурации `capabilities`.
+
+**Инварианты, закреплённые тестами:** `UNKNOWN ≠ SUPPORTED` и не блокирует
+runtime-проверку · `UNSUPPORTED` блокирует запрос · timeout, rate limit и
+отказ Resource Manager не переводят capability в `UNSUPPORTED` · один сигнал
+`UNSUPPORTED` недостаточен · успех сбрасывает счётчик · просроченная
+поддержка становится `STALE` · ключи независимы · lookup без ввода-вывода.
+
+**Тестирование:** `pytest` ✅ **1157 passed**; `ruff` ✅ · `ruff format` ✅ ·
+`mypy --strict` ✅ (128 модулей).
+
+---
+
 ## GIT COMMITS
 
 | Этап | Commit | Описание |
@@ -265,6 +293,8 @@ Architecture-тесты: драйвер SQLite и raw SQL не использу�
 | S4 | `c69065e` | `docs: update development status after stage S4` |
 | S5 | `19503b8` | `feat: add core repositories for scans, opportunities and level 2 jobs` |
 | S5 | `780d2a6` | `feat: add notification, fee, gas, capability, scheduler and audit repositories` |
+| S5 | `238aaeb` | `docs: update development status after stage S5` |
+| S6 | `f7e73e9` | `feat: add token, network, provider and capability registries` |
 
 ---
 
@@ -280,8 +310,8 @@ Architecture-тесты: драйвер SQLite и raw SQL не использу�
 | S3 | Configuration subsystem | ✅ |
 | S4 | SQLite, schema, migrations, transactions | ✅ |
 | S5 | Repositories | ✅ |
-| S6 | Token/Network/Provider/Capability registries | 🔜 следующий |
-| S7 | HTTP infrastructure (TLS, SSRF, limits) | ⬜ |
+| S6 | Token/Network/Provider/Capability registries | ✅ |
+| S7 | HTTP infrastructure (TLS, SSRF, limits) | 🔜 следующий |
 | S8 | Resource Manager | ⬜ |
 | S9.0 | Adapter contract + contract test suite + FakeAdapter | ⬜ |
 | S9.1 | 1inch adapter | ⬜ |
@@ -327,25 +357,24 @@ Telegram API заблокированы egress-политикой; ключей 
 
 ## СЛЕДУЮЩИЙ ШАГ
 
-**S6 — Registries** согласно `DEVELOPMENT_PLAN.md` §5.
+**S7 — HTTP infrastructure** согласно `DEVELOPMENT_PLAN.md` §5.
 
-Что нужно сделать (`monik/services/registries/`):
-- `NetworkRegistry` — enabled сети, chain_id, native token;
-- `TokenRegistry` — authoritative token metadata (symbol, address, decimals,
-  network, enabled), нормализация адресов, выбор Top-N; источник —
-  configuration, hard-code списка запрещён;
-- `ProviderRegistry` — регистрация Adapter'ов и enabled-состояние;
-- `CapabilityRegistry` — состояния `SUPPORTED/UNSUPPORTED/UNKNOWN/DEGRADED/
-  UNAVAILABLE/STALE/CHECKING/FAILED`, freshness, persistence через
-  `SqliteCapabilityRepository`, failure/recovery thresholds, change detection.
+Что нужно сделать (`monik/infrastructure/http/`):
+- `HttpClient` protocol и реализация на `httpx`: timeouts, TLS verification
+  (отключать нельзя), лимит размера ответа, redirect policy, connection
+  pooling, request id, нормализация transport-ошибок в `MonikError`
+  (уже есть `NetworkError`, `TimeoutError`, `RateLimitError`,
+  `AuthenticationError`, `ProviderError`, `DataError`);
+- **SSRF-защита**: allowlist хостов из конфигурации; запрет запросов по
+  произвольным URL из ответов провайдеров;
+- `FakeHttpClient` для тестов: детерминированные ответы, инъекция ошибок
+  и таймаутов (пометить как test implementation).
 
-Ключевые правила (уже зафиксированы): `UNKNOWN ≠ SUPPORTED` · discovery
-выполняется только на startup и по расписанию, не перед каждым scan ·
-runtime-ошибка не переводит capability в `UNSUPPORTED` мгновенно ·
-Circuit Breaker **не меняет** Capability Registry · статические запросы
-не делают сетевых вызовов.
+Понадобится секция конфигурации для HTTP (allowlist хостов, лимит размера
+ответа, redirect policy) — добавить по образцу существующих секций.
 
-Обязательные тесты этапа: identity токена, нормализация адресов, фильтрация
-disabled, capability lookup и freshness, обработка STALE, пороги деградации
-и восстановления, запрет мгновенного permanent disable, отсутствие сетевых
-вызовов при статических запросах.
+Обязательные тесты: timeout, 4xx/5xx/429 с `Retry-After`, превышение размера
+ответа, запрет redirect на неразрешённый host, SSRF-блокировка, TLS verify
+включён, заголовок `Authorization` не попадает в логи. Architecture-тест
+должен подтвердить, что `httpx` не импортируется вне
+`monik/infrastructure/http`.
