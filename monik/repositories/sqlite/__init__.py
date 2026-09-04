@@ -5,6 +5,10 @@
 """
 
 from monik.repositories.sqlite.capabilities import SqliteCapabilityRepository
+from monik.repositories.sqlite.confirmations import (
+    PublishedNotification,
+    SqliteConfirmationRepository,
+)
 from monik.repositories.sqlite.fees import SqliteFeeRepository, SqliteGasRepository
 from monik.repositories.sqlite.jobs import SqliteJobRepository
 from monik.repositories.sqlite.notifications import SqliteNotificationRepository
@@ -29,8 +33,10 @@ __all__ = [
     "JOB_SEQUENCE",
     "NOTIFICATION_SEQUENCE",
     "OPPORTUNITY_SEQUENCE",
+    "PublishedNotification",
     "SchedulerTaskState",
     "SqliteCapabilityRepository",
+    "SqliteConfirmationRepository",
     "SqliteFeeRepository",
     "SqliteGasRepository",
     "SqliteIdSequenceRepository",

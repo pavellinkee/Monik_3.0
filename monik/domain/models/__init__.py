@@ -11,6 +11,7 @@ Telegram DTO) преобразуются в эти модели на соотв�
 
 from monik.domain.models.base import DomainModel
 from monik.domain.models.capability import Capability, CapabilityKey
+from monik.domain.models.confirmation import AmountSnapshot, ConfirmationSnapshot
 from monik.domain.models.conversion import ConversionRate
 from monik.domain.models.fee import Fee, FeeKey, FeeSnapshot
 from monik.domain.models.gas import Gas, GasPrice
@@ -49,6 +50,8 @@ from monik.domain.models.scheduler import SchedulerExecution, SchedulerTask
 from monik.domain.models.token import Token, TokenKey
 
 __all__ = [
+    "AmountSnapshot",
+    "ConfirmationSnapshot",
     "PROFIT_FORMULA_VERSION",
     "AmountVerificationResult",
     "ApplicationHealth",

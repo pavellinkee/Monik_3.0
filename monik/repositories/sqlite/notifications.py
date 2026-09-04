@@ -15,11 +15,11 @@ from monik.domain.models.notification import (
 )
 from monik.domain.value_objects.identifiers import OpportunityId
 from monik.domain.value_objects.timestamps import UtcDatetime
-from monik.infrastructure.db.connection import Database
+from monik.infrastructure.db.connection import Database, Transaction
 from monik.infrastructure.db.types import from_timestamp, to_timestamp
 from monik.repositories.sqlite.mapping import column, optional_column
 
-__all__ = ["SqliteNotificationRepository"]
+__all__ = ["SqliteNotificationRepository", "insert_notification"]
 
 _COLUMNS = (
     "notification_id, opportunity_id, destination_id, destination_kind, mode, status, "
@@ -32,6 +32,47 @@ _PENDING_STATUSES = (
     NotificationStatus.QUEUED.value,
     NotificationStatus.RETRY_WAIT.value,
 )
+
+
+async def insert_notification(
+    tx: Transaction,
+    notification: Notification,
+    *,
+    message_text: str | None = None,
+    details_text: str | None = None,
+) -> None:
+    """Вставить уведомление в рамках существующей транзакции.
+
+    Позволяет записать Opportunity и её уведомления одной транзакцией:
+    возможность обязана быть сохранена до постановки доставки в очередь
+    (``15_NOTIFICATION_SYSTEM.md`` §4).
+    """
+    await tx.execute(
+        f"INSERT INTO notifications ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        _notification_values(notification, message_text, details_text),
+    )
+
+
+def _notification_values(
+    notification: Notification, message_text: str | None, details_text: str | None
+) -> tuple[object, ...]:
+    """Позиционные значения строки уведомления."""
+    return (
+        notification.notification_id,
+        str(notification.opportunity_id),
+        notification.destination.destination_id,
+        notification.destination.kind.value,
+        notification.destination.mode.value,
+        notification.status.value,
+        notification.sequence,
+        notification.attempt_count,
+        str(notification.fingerprint),
+        message_text,
+        details_text,
+        to_timestamp(notification.created_at),
+        to_timestamp(notification.updated_at),
+        to_timestamp(notification.next_attempt_at) if notification.next_attempt_at else None,
+    )
 
 
 class SqliteNotificationRepository:
@@ -60,24 +101,7 @@ class SqliteNotificationRepository:
         await self._database.execute(
             f"INSERT INTO notifications ({_COLUMNS}) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                notification.notification_id,
-                str(notification.opportunity_id),
-                notification.destination.destination_id,
-                notification.destination.kind.value,
-                notification.destination.mode.value,
-                notification.status.value,
-                notification.sequence,
-                notification.attempt_count,
-                str(notification.fingerprint),
-                message_text,
-                details_text,
-                to_timestamp(notification.created_at),
-                to_timestamp(notification.updated_at),
-                to_timestamp(notification.next_attempt_at)
-                if notification.next_attempt_at
-                else None,
-            ),
+            _notification_values(notification, message_text, details_text),
         )
 
     async def get(self, notification_id: str) -> Notification | None:
