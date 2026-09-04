@@ -123,12 +123,22 @@ class ProfitResult(DomainModel):
     net_profit: SignedDecimal | None = None
     net_roi: Percentage | None = None
     threshold_outcome: ThresholdOutcome | None = None
+    invalid_reason: str | None = Field(default=None, max_length=256)
     formula_version: int = Field(default=PROFIT_FORMULA_VERSION, ge=1)
     calculated_at: UtcDatetime
 
     @model_validator(mode="after")
     def _validate(self) -> Self:
-        """``COMPLETE`` требует полного набора рассчитанных значений."""
+        """``COMPLETE`` требует полного набора рассчитанных значений.
+
+        Причина невозможности расчёта фиксируется явно
+        (``09_PROFIT_CALCULATOR.md`` §73): молчаливое исправление данных
+        запрещено, поэтому ``INVALID`` обязан нести объяснение.
+        """
+        if self.status is CalculationStatus.INVALID and not self.invalid_reason:
+            raise ValueError("INVALID calculation must carry an explicit reason")
+        if self.status is not CalculationStatus.INVALID and self.invalid_reason:
+            raise ValueError("invalid_reason is only meaningful for an INVALID calculation")
         if self.status is CalculationStatus.COMPLETE:
             missing = [
                 name

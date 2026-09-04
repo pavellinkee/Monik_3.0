@@ -7,7 +7,7 @@ from typing import Self
 
 from pydantic import Field, model_validator
 
-from monik.domain.enums.fees import FeeStatus
+from monik.domain.enums.fees import CostInclusion, FeeStatus
 from monik.domain.models.base import DomainModel
 from monik.domain.models.token import TokenKey
 from monik.domain.value_objects.identity import NetworkId
@@ -61,6 +61,11 @@ class Gas(DomainModel):
     Стоимость хранится в native token сети; перевод в валюту расчёта
     выполняет ConversionService, а не эта модель
     (``07_FEE_SYSTEM.md`` §52).
+
+    ``inclusion`` защищает от повторного вычитания gas, уже учтённого в
+    исходном financial value (``09_PROFIT_CALCULATOR.md`` §46). Значение
+    по умолчанию — ``NOT_INCLUDED``: quote агрегатора сообщает output
+    amount в токене и gas в него не входит.
     """
 
     network_id: NetworkId
@@ -69,6 +74,7 @@ class Gas(DomainModel):
     gas_price: GasPrice | None = None
     native_token: TokenKey | None = None
     cost_native: NonNegativeDecimal | None = None
+    inclusion: CostInclusion = CostInclusion.NOT_INCLUDED
     observed_at: UtcDatetime
     source: str = Field(min_length=1, max_length=128)
 

@@ -23,6 +23,7 @@ from monik.domain.enums import (
 )
 from monik.domain.models import (
     Candidate,
+    ConversionRate,
     CostBreakdown,
     Fee,
     Gas,
@@ -30,6 +31,7 @@ from monik.domain.models import (
     Level2Job,
     Opportunity,
     OpportunityAmount,
+    ProfitCalculationInput,
     ProfitResult,
     Quote,
     Route,
@@ -299,4 +301,45 @@ def unknown_gas() -> Gas:
         status=FeeStatus.UNKNOWN,
         observed_at=NOW,
         source="test",
+    )
+
+
+def native_rate(*, rate: str = "0.50", expires_at: datetime | None = None) -> ConversionRate:
+    """Курс native token сети в валюту расчёта (WMATIC -> USDT)."""
+    return ConversionRate(
+        from_token=WMATIC.key,
+        to_token=USDT.key,
+        rate=Decimal(rate),
+        source="test",
+        observed_at=NOW,
+        expires_at=expires_at,
+    )
+
+
+def calculation_input(
+    *,
+    input_raw: int = 100_000_000,
+    buy_output_raw: int = 5 * 10**18,
+    sell_output_raw: int = 101_500_000,
+    fees: tuple[Fee, ...] = (),
+    gas: Gas | None = None,
+    conversion_rates: tuple[ConversionRate, ...] = (),
+    threshold: str = "1.00",
+    threshold_metric: ThresholdMetric = ThresholdMetric.NET_ROI,
+    formula_version: int = 1,
+) -> ProfitCalculationInput:
+    """Контекст расчёта USDT -> AAVE -> USDT на 100 USDT."""
+    return ProfitCalculationInput(
+        input_amount=USDT.amount_from_base_units(input_raw),
+        input_token=USDT.key,
+        buy_output=AAVE.amount_from_base_units(buy_output_raw),
+        intermediate_token=AAVE.key,
+        sell_output=USDT.amount_from_base_units(sell_output_raw),
+        output_token=USDT.key,
+        fees=fees,
+        gas=gas,
+        conversion_rates=conversion_rates,
+        threshold=Decimal(threshold),
+        threshold_metric=threshold_metric,
+        formula_version=formula_version,
     )
