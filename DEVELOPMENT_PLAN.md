@@ -83,8 +83,10 @@
 - Canonical модели — `36_DATA_MODELS.md`. Domain не зависит от SQLite/HTTP/Telegram/env.
 - `Network`, `Token` (identity = `network_id + normalized_address`, decimals явно),
   `TokenAmount`, `Provider`, `Route` + `RouteStep` + `route_fingerprint`, `Quote`,
-  `Fee`, `Gas`, `ProfitCalculationInput`, `ProfitResult`, `Candidate`, `Level2Job`,
-  `ConfirmationResult`, `Opportunity`, `Notification`, `Scan`, `ResourceRequest/Result`,
+  `Fee`, `Gas`, `ProfitCalculationInput`, `ProfitResult`,
+  **`Opportunity`** (сущность Level 1, `#V`), **`Level2Job`** (`#K`),
+  `Candidate` (промежуточный внутренний результат Level 1 до прохождения проверок),
+  `ConfirmationResult`, `Notification`, `Scan`, `ResourceRequest/Result`,
   `SchedulerTask`, `Capability`, `HealthState`, `Error`.
 - Финансы: `int` для raw base units, `Decimal` для денег/процентов. `float` запрещён везде.
 - Все timestamps — timezone-aware UTC.
@@ -95,10 +97,10 @@
 Scheduler → Level 1 scan
   → per token: BUY_STARTED → BUY_RESULT_RECEIVED → BUY_COMPLETE → MAX_BUY_READY
   → SELL_QUEUED → SELL_RUNNING → SELL_COMPLETE → EVALUATION_READY
-  → Candidate(#V) + Level2Job(#K)  [атомарно]
+  → Opportunity(#V, CREATED) + Level2Job(#K)  [атомарно]
   → Level 2: fresh BUY quote (тот же route) → SELL на ТЕКУЩЕМ BUY output
              → fresh fees + gas → ProfitCalculator → per-amount status
-  → Opportunity (immutable snapshot) → persist → Notification → Telegram
+  → Opportunity → CONFIRMED (immutable financial snapshot) → persist → Notification → Telegram
 ```
 
 - SELL одного токена **не ждёт** BUY других токенов (CLAUDE.md §16, `04_SCHEDULER §15,16`).
@@ -141,8 +143,16 @@ Scheduler → Level 1 scan
 
 - `Level2Job`: QUEUED → RUNNING → {CONFIRMED, REJECTED, FAILED, EXPIRED, CANCELLED};
   requeue `FAILED → QUEUED` только через explicit recovery-операцию; expiration > retry.
-- `Candidate`: CREATED → QUEUED → PROCESSING → {CONFIRMED, REJECTED, EXPIRED, CANCELLED, FAILED}.
-- `Opportunity`: CONFIRMED → {NOTIFIED, NOTIFIED_PARTIAL, NOTIFIED_FAILED} (+ EXPIRED по `30 §27`).
+- `Opportunity` (единый lifecycle, решение D-1):
+  CREATED → VERIFYING → {CONFIRMED, PARTIAL, UNPROFITABLE, ROUTE_UNAVAILABLE, EXPIRED,
+  FAILED, CANCELLED}; далее {CONFIRMED, PARTIAL} → {NOTIFIED, NOTIFIED_PARTIAL,
+  NOTIFIED_FAILED}. Статусы `11 §47` — verification-часть, статусы `35 §59` / `30 §27` —
+  notification-часть одного и того же жизненного цикла.
+- Per-amount статусы (`11 §48`): VERIFIED_PROFITABLE / VERIFIED_UNPROFITABLE / UNKNOWN /
+  FAILED / EXPIRED / ROUTE_UNAVAILABLE → отображаются на CONFIRMED / UNCONFIRMED /
+  PARTIAL (CLAUDE.md §26).
+- `Candidate` — **не** persistent сущность: промежуточный value object внутри Level 1
+  (сопряжённая BUY/SELL комбинация до применения threshold и валидации).
 - `Notification`: QUEUED → SENDING → {SENT, RETRY_WAIT, FAILED, CANCELLED}; RETRY_WAIT → SENDING.
 - `SchedulerTaskExecution`: SCHEDULED → RUNNING → {SUCCESS, FAILED, SKIPPED, CANCELLED}.
 - `ProviderHealth`: UNKNOWN / HEALTHY / DEGRADED / UNAVAILABLE / RECOVERING (+ гистерезис).
@@ -278,14 +288,14 @@ architecture tests (`25 §51`, `23 §53-57`).
 **Зависимости:** S0.
 **Реализовать (`monik/domain/`):**
 - `enums/`: `ProviderId`, `OperationType(BUY|SELL)`, `RoutingMode`, `QuoteStatus`,
-  `FeeType`, `FeeStatus`, `CalculationStatus`, `CandidateStatus`, `JobStatus`,
+  `FeeType`, `FeeStatus`, `CalculationStatus`, `OpportunityStatus`, `JobStatus`,
   `OpportunityStatus`, `AmountConfirmationStatus`, `NotificationStatus`,
   `CapabilityStatus`, `HealthStatus`, `ProviderHealthStatus`, `ErrorCategory`,
   `ErrorSeverity`, `ScanStatus`, `TaskExecutionStatus`, `ResourceResultStatus`,
   `Priority`, `NotificationMode(A|B)`. Значения — стабильные строки (`36 §76`).
 - `value_objects/`: `NetworkId`, `TokenAddress` (нормализация lowercase + checksum-safe),
   `TokenAmount` (raw `int` + `decimals` → `Decimal`), `Percentage`, `Money`,
-  `RouteFingerprint`, `CandidateFingerprint`, `CorrelationId`, `VId`/`KId` (форматы
+  `RouteFingerprint`, `OpportunityFingerprint`, `CorrelationId`, `VId`/`KId` (форматы
   `#V1234` / `#K1234`).
 - `models/`: все canonical модели из §2.1, frozen там, где требуется immutability
   (`Quote`, `Opportunity`, `ProfitResult`, `Route`, fee/gas snapshots).
@@ -357,14 +367,15 @@ env override и приоритет источников; cross-field конфл�
 - migration runner + таблица `schema_migrations`; миграции нумерованные, последовательные,
   атомарные; при ошибке миграции — старт прерывается;
 - migration `0001_initial`: таблицы
-  `schema_migrations`, `app_metadata`, `scans`, `candidates`, `candidate_amounts`,
-  `level2_jobs`, `level2_attempts`, `level2_amount_results`, `opportunities`,
-  `opportunity_amounts`, `notifications`, `notification_attempts`,
+  `schema_migrations`, `app_metadata`, `scans`,
+  `opportunities`, `opportunity_amounts`,
+  `level2_jobs`, `level2_attempts`, `level2_amount_results`,
+  `notifications`, `notification_attempts`,
   `fee_snapshots`, `fee_records`, `gas_snapshots`, `capabilities`,
   `scheduler_tasks`, `scheduler_executions`, `state_transitions`;
   индексы и UNIQUE-ограничения по `30 §60-65`, включая
   `UNIQUE(opportunity_id, destination_id)` для notifications и индекс на
-  `candidates.fingerprint`.
+  `opportunities.fingerprint`.
 
 **Тесты (`tests/integration/db/`):** создание БД с нуля; применение всех migrations;
 идемпотентность повторного запуска; проверка наличия индексов/constraints/FK;
@@ -379,19 +390,19 @@ env override и приоритет источников; cross-field конфл�
 **Зависимости:** S4.
 **Реализовать:**
 - интерфейсы (Protocol) в `repositories/interfaces/`, SQLite-реализации в
-  `repositories/sqlite/`: `ScanRepository`, `CandidateRepository`, `JobRepository`,
-  `OpportunityRepository`, `NotificationRepository`, `FeeRepository`,
+  `repositories/sqlite/`: `ScanRepository`, `OpportunityRepository`, `JobRepository`,
+  `NotificationRepository`, `FeeRepository`,
   `GasRepository`, `CapabilityRepository`, `SchedulerRepository`,
   `StateTransitionRepository`;
 - mapping domain ↔ database (raw amounts как TEXT/INTEGER, Decimal как TEXT —
   без float ни на одном участке);
-- атомарные операции: `create_candidate_with_job()` (CLAUDE.md §29),
-  `create_opportunity_with_amounts()`;
-- запросы recovery: активные/зависшие jobs, pending notifications, expired candidates.
+- атомарная операция `create_opportunity_with_job()` — Opportunity + amount-контексты
+  + Level2Job в одной транзакции (CLAUDE.md §29);
+- запросы recovery: активные/зависшие jobs, pending notifications, expired opportunities.
 
 **Тесты (`tests/integration/repositories/`):** CRUD каждого репозитория; фильтрация;
 pagination; dedup по fingerprint; enforcement UNIQUE; rollback; сохранение точности
-Decimal при round-trip; атомарность `candidate+job`; recovery-запросы.
+Decimal при round-trip; атомарность `opportunity+amounts+job`; recovery-запросы.
 **DoD:** ни одного SQL вне `repositories/sqlite/`; architecture-тест это подтверждает.
 **Commit:** `feat: implement repository layer over sqlite`
 
@@ -503,9 +514,9 @@ batch accounting; **тест: параллельные операции на р�
 
 ---
 
-### S10 — Fee System и Gas System
+### S10 — Fee System, Gas System, Prices/Conversion
 **Зависимости:** S8, S9.0.
-**Реализовать (`services/fees/`, `services/gas/`):**
+**Реализовать (`services/fees/`, `services/gas/`, `services/prices/`) — см. решение D-4:**
 - `FeeProvider` interface, `FeePolicy` per-provider (изолированно от Scanner —
   никаких `if aggregator == ...` вне policy);
 - `FeeKey` (провайдер × сеть × операция × токен/route-контекст — без чрезмерного обобщения);
@@ -513,17 +524,26 @@ batch accounting; **тест: параллельные операции на р�
 - fee discovery: startup + scheduled; grouping/batching; дедупликация запросов;
 - fee snapshots с версией и persistence; `included_in_quote` флаг;
 - rebate как отдельный компонент (не отрицательная fee);
-- `GasProvider`: gas units × gas price, native token, конвертация в calculation currency,
-  freshness; **UNKNOWN gas ≠ 0**;
-- conversion service (native → calculation currency) с source/timestamp/rate/precision
-  и явным направлением конверсии.
+- `GasPriceProvider` protocol + реализации `RpcGasPriceProvider` (eth_gasPrice /
+  eth_feeHistory, EIP-1559), `AdapterGasEstimateProvider` (gas estimate из quote),
+  `StaticGasPriceProvider` (test impl);
+- `GasEstimator`: gas_units × gas_price → стоимость в native token; freshness;
+  **UNKNOWN gas ≠ 0**;
+- `TokenPriceProvider` protocol + `AggregatorQuotePriceProvider`, `HttpPriceProvider`
+  (CoinGecko/DeFiLlama, подключается конфигом), `StaticPriceProvider` (test impl);
+- `ConversionService`: native gas token → базовая валюта расчёта (USDT/USD) с
+  source/timestamp/pair/rate/precision, явным направлением и freshness-политикой;
+  при stale/недоступности → `PARTIAL`/`UNKNOWN`;
+- выбор реализаций только через configuration; все внешние вызовы — через Resource Manager.
 
 **Тесты:** нормализация fee; UNKNOWN не превращается в 0; expired fee;
 percentage vs fixed vs multi-leg; base выбирается по policy, не угадывается;
 дедупликация одновременных fee-запросов; batching; refresh failure; rebate;
-gas conversion и stale conversion; `included_in_quote` предотвращает двойной учёт.
+gas: EIP-1559 расчёт, gas из route estimate, отсутствие gas → UNKNOWN;
+price provider: подстановка любой реализации без изменения Calculator;
+conversion и stale conversion; `included_in_quote` предотвращает двойной учёт.
 **DoD:** Level 1/Level 2 получают нормализованные fee/gas без provider-specific логики.
-**Commit:** `feat: implement fee system, gas system and conversion with freshness policy`
+**Commit:** `feat: implement fee system, gas providers and price conversion`
 
 ---
 
@@ -568,16 +588,17 @@ golden test cases (фиксированные входы → фиксирова�
 - SELL quotes по разрешённым provider pairs; сопряжение BUY/SELL по intermediate token,
   сети и amount context; round-trip `input == output token`;
 - preliminary profitability через `ProfitCalculator`; preliminary threshold;
-- `Candidate` с route snapshot (BUY route + SELL route + fingerprints), N amount-контекстов,
-  `#V`-идентификатором, `detected_at`, `scan_id`, expiration;
+- `Opportunity` (status `CREATED`) с route snapshot (BUY route + SELL route +
+  fingerprints), N amount-контекстов, `#V`-идентификатором, `detected_at`, `scan_id`,
+  expiration; промежуточные `Candidate` value objects не персистятся;
 - deterministic fingerprint + deduplication window; ranking при нехватке capacity;
-- лимит candidates за цикл, backpressure по Level 2 queue;
-- **атомарное** создание `Candidate` + `Level2Job` (`#K`) и немедленная передача;
+- лимит opportunities за цикл, backpressure по Level 2 queue;
+- **атомарное** создание `Opportunity` + amount-контекстов + `Level2Job` (`#K`) и немедленная передача;
 - изоляция ошибок (token/provider/network), partial scan, cancellation, shutdown.
 
 **Тесты (`tests/component/level1/`):** фильтрация по token/network/provider/capability;
 несколько сумм; нормализация и валидация quote; freshness; invalid/zero output;
-интеграция fee/gas; preliminary threshold; создание Candidate; fingerprint;
+интеграция fee/gas; preliminary threshold; создание Opportunity; fingerprint;
 дедупликация; expiration; backpressure; ranking; partial scan; таймаут провайдера;
 rate limit; отмена; overlap SKIP; **тест «SELL токена A не ждёт BUY токена B»**;
 **тест «Level 1 не отправляет Telegram»**; **тест «Level 1 не обходит RM»**;
@@ -590,7 +611,7 @@ rate limit; отмена; overlap SKIP; **тест «SELL токена A не ж
 **Зависимости:** S12.
 **Реализовать (`services/level2/`):**
 - `Level2Scanner.confirm(job) -> ConfirmationResult`; state machine Job'а;
-- проверка expiration Candidate/Job **до** любых запросов; проверка capability;
+- проверка expiration Opportunity/Job **до** любых запросов; проверка capability;
 - fresh BUY quote по **зафиксированному** route (fixed-route параметры адаптера);
 - сравнение route fingerprint; несоответствие → `ROUTE_UNAVAILABLE` / `ROUTE_MISMATCH`,
   **без подбора альтернативы**;
@@ -615,10 +636,11 @@ retry внутри K-ID; отмена; rate limit ≠ unprofitable; temporary vs
 
 ---
 
-### S14 — Opportunity Service
+### S14 — Opportunity Service (confirmation snapshot)
 **Зависимости:** S13.
 **Реализовать (`services/opportunity/`):**
-- создание `Opportunity` только после успешного confirmation;
+- перевод `Opportunity` в `CONFIRMED`/`PARTIAL` только после успешного Level 2 confirmation;
+- фиксация immutable confirmation snapshot;
 - immutable financial snapshot; попытка обычного изменения → ошибка;
 - идемпотентность и защита от дублей (один подтверждённый Job → максимум одна Opportunity);
 - persistence **до** постановки notification в очередь (в одной транзакции с
@@ -717,7 +739,7 @@ overlap SKIP; missed schedule; manual во время scheduled; отмена; �
 
 ### S19 — Observability
 **Зависимости:** S18.
-**Реализовать:** correlation IDs сквозь весь workflow (scan_id, candidate/V-ID, K-ID,
+**Реализовать:** correlation IDs сквозь весь workflow (scan_id, V-ID, K-ID,
 request_id, provider, resource, duration, error category); метрики Level 1/Level 2/
 Resource Manager/Fee/Notification/Scheduler/DB; события state transitions;
 проверка отсутствия секретов в любом выводе.
@@ -746,7 +768,7 @@ graceful shutdown с таймаутом.
 ### S21 — Integration tests (сквозные сценарии)
 **Зависимости:** S20.
 Сценарии (`tests/integration/`, `tests/e2e/`) на `FakeAdapter` + tmp SQLite + FakeClock:
-успешная opportunity end-to-end; неприбыльный candidate; stale quote; missing fee;
+успешная opportunity end-to-end; неприбыльная opportunity; stale quote; missing fee;
 missing gas; timeout провайдера; rate limit; retry; expiration; отмена;
 route unavailable; partial confirmation; notification failure; несколько destinations.
 **Commit:** `test: add end-to-end integration scenarios`
@@ -754,9 +776,10 @@ route unavailable; partial confirmation; notification failure; нескольк�
 ---
 
 ### S22 — Recovery / crash tests
-Крах в контрольных точках (`39 §55`): после создания Candidate; после создания Job;
-во время выполнения Job; после сохранения Opportunity; во время notification; во время retry.
-Проверка: нет дублей Candidate/Job/Opportunity/Notification; `RUNNING` не становится успехом.
+Крах в контрольных точках (`39 §55`): после создания Opportunity; после создания Job;
+во время выполнения Job; после сохранения confirmation snapshot; во время notification;
+во время retry.
+Проверка: нет дублей Opportunity/Job/Notification; `RUNNING` не становится успехом.
 **Commit:** `test: add crash and recovery scenarios`
 
 ---
@@ -832,8 +855,8 @@ S6 + S8 + S9 + S10 + S11 → S12 → S13 → S14 → S15 → S16
 | # | Риск | Влияние | Обработка |
 |---|---|---|---|
 | **Р-1** | **Провайдерские API и их официальные доки заблокированы egress-политикой; API-ключей нет** | Требование CLAUDE.md §9 и `06 §54,62,64` (верификация против реального API) **невыполнимо в этой среде** | Реализовать адаптеры по контрактам, собранным через `WebSearch`; вынести endpoints/params в один файл на адаптер; пометить каждый adapter как `NOT live-verified`; поставить `scripts/verify_provider_api.py`; **явно указать это ограничение в финальном отчёте** (CLAUDE.md §46, §53) |
-| **Р-2** | Терминологический конфликт `Candidate` vs `Opportunity` между документами (см. §9, D-1) | Затрагивает модели, схему БД и state machines | **Требуется решение пользователя** — предложен вариант D-1 |
-| **Р-3** | Gas требует RPC/gas-API, которые тоже недоступны | Level 2 не сможет получить реальный gas | `GasProvider` как интерфейс + provider-quote gas там, где API его отдаёт; при отсутствии — статус `UNKNOWN` (что архитектурно корректно: не подтверждать). Реальный источник настраивается конфигом |
+| **Р-2** | Терминологический конфликт `Candidate` vs `Opportunity` между документами | Затрагивает модели, схему БД и state machines | ✅ **ЗАКРЫТ** решением пользователя D-1 (см. §9) |
+| **Р-3** | RPC и price-API недоступны в этой среде | Нельзя получить реальный gas/цену | Решение D-4: `GasPriceProvider` / `TokenPriceProvider` как независимые абстракции, реальные реализации + mocks; при отсутствии данных → `UNKNOWN` (архитектурно корректно: не подтверждать). Источник заменяется конфигом без правки Calculator |
 | **Р-4** | Telegram API недоступен | Нельзя проверить реальную доставку | Полное покрытие тестами через `FakeHttpClient`; реальная доставка помечается как непроверенная |
 | **Р-5** | Объём: ~26 этапов, большая кодовая база | Может не уместиться в одну сессию | Каждый этап — отдельный commit и отдельная запись в `DEVELOPMENT_STATUS.md`; возобновление с любого места |
 | **Р-6** | Два документа на подсистему могут дать расхождения при реализации | Остановка работы | Оба документа читаются совместно; при реальном конфликте — STOP + REPORT (CLAUDE.md §44), работа продолжается по другим этапам |
@@ -844,45 +867,104 @@ S6 + S8 + S9 + S10 + S11 → S12 → S13 → S14 → S15 → S16
 
 ---
 
-## 9. РЕШЕНИЯ, ТРЕБУЮЩИЕ ПОДТВЕРЖДЕНИЯ ПОЛЬЗОВАТЕЛЯ
+## 9. ЗАФИКСИРОВАННЫЕ АРХИТЕКТУРНЫЕ РЕШЕНИЯ
 
-Перечислены по правилу CLAUDE.md §44 и `42_ARCHITECTURE_MAP §43-45`.
-**Ни одно из них не блокирует старт** — все имеют предложенный default,
-но D-1 затрагивает state machines, поэтому требует явного «да».
+Все решения **приняты пользователем 2026-09-04** и обязательны к исполнению.
+Переспрашивать по ним не требуется.
 
-**D-1 (важно). Наименование сущности Level 1.**
-`10_LEVEL_1_SCANNER` и `11_LEVEL_2_SCANNER` называют результат Level 1 «Opportunity»
-(со статусами CREATED/VERIFYING/PARTIAL/UNPROFITABLE/ROUTE_UNAVAILABLE…),
-а `36_DATA_MODELS`, `35_STATE_MACHINES`, `30_DATABASE_SCHEMA`, `02_LEVEL1_SCANNER` —
-«Candidate», и резервируют имя «Opportunity» за подтверждённым снимком.
+### D-1 — Наименование сущности Level 1 ✅ ЗАФИКСИРОВАНО
 
-*Предлагаемое решение (сохраняет требования обоих семейств документов):*
-- сущность Level 1 = `Candidate` (каноническое имя из `36`), несёт route snapshot +
-  N amount-контекстов, отображается как `#V1234`;
-- `Level2Job` = `#K1234`;
-- `Opportunity` = immutable подтверждённый снимок (`36`/`35`/`30`), статусы
-  CONFIRMED/NOTIFIED/NOTIFIED_PARTIAL/NOTIFIED_FAILED/EXPIRED;
-- статусы из `11 §47` реализуются как lifecycle `Candidate` + per-amount статусы `11 §48`.
+**Решение пользователя:**
+- **`Opportunity` — официальное название сущности Level 1.**
+- **`Candidate` — промежуточный результат до прохождения необходимых проверок**
+  (внутренний value object Level 1, не persistent entity).
+- Разработку из-за расхождения документов не останавливать.
 
-**D-2. Telegram-команды и кнопка `об`.**
-Требуются `CLAUDE.md §35-36`, но отсутствуют в `15_NOTIFICATION_SYSTEM` (там только
-исходящая доставка). Трактуется как расширение, а не конфликт (CLAUDE.md — источник №1).
-*Предлагается:* реализовать входящий канал (long-polling) как отдельный модуль
-Notification-подсистемы, без бизнес-логики и без provider-запросов.
+**Реализация:**
+- Level 1 создаёт `Opportunity` в статусе `CREATED` с идентификатором `#V1234`,
+  route snapshot (BUY + SELL) и N amount-контекстами.
+- `Level2Job` — `#K1234`, отдельное пространство идентификаторов (CLAUDE.md §20).
+- Единый lifecycle `Opportunity`:
+  `CREATED → VERIFYING → {CONFIRMED, PARTIAL, UNPROFITABLE, ROUTE_UNAVAILABLE,
+  EXPIRED, FAILED, CANCELLED}`, далее `{CONFIRMED, PARTIAL} → {NOTIFIED,
+  NOTIFIED_PARTIAL, NOTIFIED_FAILED}`.
+  Так объединяются статусы `11 §47` (verification) и `35 §59` / `30 §27` (notification).
+- Per-amount статусы `11 §48` → `CONFIRMED / UNCONFIRMED / PARTIAL` (CLAUDE.md §26).
+- После достижения `CONFIRMED`/`PARTIAL` financial snapshot **immutable**
+  (`36 §45`, `35 §66`); коррекция — только через explicit correction/audit mechanism.
+- Таблицы: `opportunities`, `opportunity_amounts`, `level2_jobs`, `level2_attempts`,
+  `level2_amount_results`. Отдельной таблицы `candidates` нет
+  (`30 §28` допускает, но не требует её).
 
-**D-3. Верификация провайдерских API.** См. Р-1.
-*Предлагается:* реализовать по документированным контрактам, пометить как непроверенные
-вживую, поставить скрипт верификации. Требуется подтверждение, что это приемлемо.
+### D-2 — Telegram-команды и кнопка `об` ✅ ЗАФИКСИРОВАНО
 
-**D-4. Источник gas и conversion rate.**
-Архитектура требует gas и конвертацию, но не фиксирует источник.
-*Предлагается:* по умолчанию — gas из quote-ответа провайдера (где он есть) +
-опциональный `gas_provider` в конфиге (RPC / gas API); при отсутствии — `UNKNOWN`
-(подтверждение не выдаётся). Реальный источник подключается конфигурацией.
+Реализуются согласно `CLAUDE.md §35-36` как входящий канал Notification-подсистемы
+(long-polling через Resource Manager, низкий приоритет). Handlers читают только
+сохранённые snapshots из репозиториев, **не инициируют provider-запросы** и
+не блокируют Scanner.
 
-**D-5. Идентичность Velora.**
-Velora — это ребрендинг ParaSwap. *Предлагается:* `provider_id = "velora"`,
-endpoints из актуального API ParaSwap/Velora, вынесены в один файл адаптера.
+### D-3 — Адаптеры без live-верификации API ✅ ЗАФИКСИРОВАНО
+
+**Решение пользователя:** реализовать полноценные адаптеры для 1inch, 0x,
+Velora/ParaSwap и Uniswap согласно документации и архитектурным требованиям;
+добавить mocks, contract- и integration-тесты и `scripts/verify_provider_api.py`.
+Live-проверка переносится на последующий этап.
+
+**Реализация:**
+- каждый adapter — полноценный production-модуль с реальным построением запросов,
+  парсингом, нормализацией, error mapping, route extraction, fee extraction,
+  fixed-route поддержкой;
+- endpoints/params/network ids/auth локализованы в одном `endpoints.py` внутри адаптера,
+  чтобы корректировка после live-проверки была минимальной;
+- каждый adapter проходит общий contract test suite;
+- в docstring адаптера и в финальном отчёте — пометка
+  `API contract NOT verified against live endpoint`;
+- `scripts/verify_provider_api.py` выполняет реальные запросы и сверяет схему ответа
+  с ожиданиями адаптера (запускается пользователем в среде с сетью и ключами).
+
+### D-4 — Gas и conversion rate ✅ ЗАФИКСИРОВАНО
+
+**Решение пользователя:** `GasPriceProvider` и `TokenPriceProvider` — независимые
+абстракции; gas определяется динамически для каждой сети через доступный RPC и/или
+gas estimate маршрута от адаптера; conversion переводит стоимость native gas token
+в базовую валюту расчёта (предпочтительно USDT/USD); бизнес-логика не привязана
+к конкретному внешнему провайдеру цен; конкретные источники (RPC, Chainlink,
+CoinGecko, DeFiLlama и др.) подключаются реализациями Provider; на этапе разработки
+используются mocks и тестовые данные.
+
+**Реализация (`services/gas/`, `services/prices/`):**
+- `GasPriceProvider` protocol → `RpcGasPriceProvider` (eth_gasPrice / eth_feeHistory,
+  EIP-1559 baseFee+priorityFee), `AdapterGasEstimateProvider` (gas estimate из quote),
+  `StaticGasPriceProvider` (тестовый/fallback, помечен как test impl);
+- `GasEstimator` = gas_units (из route/adapter) × gas_price (из `GasPriceProvider`)
+  → стоимость в native token; при недостатке данных → `UNKNOWN`, **не 0**;
+- `TokenPriceProvider` protocol → `AggregatorQuotePriceProvider` (цена native token
+  через quote к USDT у уже подключённого агрегатора), `HttpPriceProvider`
+  (CoinGecko / DeFiLlama — подключается конфигом), `StaticPriceProvider` (тестовый);
+- `ConversionService`: native gas token → базовая валюта расчёта (по умолчанию USDT
+  на соответствующей сети); хранит `source`, `timestamp`, `pair`, `rate`, `precision`,
+  направление конверсии; при stale/недоступности → `PARTIAL`/`UNKNOWN`;
+- выбор реализаций — только через configuration; `ProfitCalculator` получает уже
+  нормализованные `Gas` и conversion data и **не знает** об источниках;
+- все внешние вызовы (RPC, price API) идут через Resource Manager.
+
+### D-5 — Идентичность Velora ✅ ЗАФИКСИРОВАНО
+
+`provider_id = "velora"`; Velora — ребрендинг ParaSwap, используются актуальные
+endpoints Velora/ParaSwap, вынесенные в `endpoints.py` адаптера.
+
+### D-6 — Секреты и ключи ✅ ЗАФИКСИРОВАНО
+
+Реальные API-ключи и Telegram bot token **не предоставляются**. Разработка ведётся
+полностью без них:
+- все credentials — только через environment variables, объявленные в конфиге как
+  ссылки `{env: "MONIK_..."}`; в YAML реальных значений нет никогда;
+- `config/config.example.yaml` + `.env.example` описывают все требуемые переменные;
+- при отсутствии переменной provider помечается как `disabled`/`unconfigured` с
+  внятной ошибкой конфигурации — приложение не падает молча и не подставляет заглушку;
+- тесты используют только фиктивные значения; secret redaction покрыта тестами;
+- после завершения разработки достаточно задать env-переменные — изменения кода
+  не потребуются.
 
 ---
 
