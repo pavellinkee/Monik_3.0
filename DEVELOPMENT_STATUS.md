@@ -12,10 +12,10 @@
 |---|---|
 | Дата обновления | 2026-09-04 |
 | Ветка | `claude/monik-implementation` |
-| Последний завершённый этап | **S1 — Domain: enums, value objects, models** |
-| Следующий этап | **S2 — Errors, Clock, structured logging + redaction** |
+| Последний завершённый этап | **S2 — Errors, Clock, structured logging + redaction** |
+| Следующий этап | **S3 — Configuration subsystem** |
 | Статус разработки | ▶ идёт автономная разработка по DEVELOPMENT_PLAN.md |
-| Тесты | 466 passed |
+| Тесты | 566 passed |
 | Проверки | ruff ✅ · ruff format ✅ · mypy --strict ✅ · pytest ✅ |
 
 ---
@@ -117,6 +117,39 @@ frozen с `extra="forbid"`.
 
 ---
 
+### S2 — Errors, Clock, structured logging + redaction ✅
+
+**Реализовано:**
+- `monik/domain/errors/` — `ErrorInfo` (сериализуемая модель ошибки) и
+  иерархия `MonikError`: Configuration, DomainValidation, Calculation,
+  Cancellation, Internal, Network, Timeout, RateLimit, Authentication,
+  Provider, Data, Unsupported, Database, Resource; классификация
+  retryable / non-retryable / conditional с учётом retry budget;
+- `monik/services/observability/clock.py` — `Clock` protocol, `SystemClock`,
+  `FakeClock` (детерминированное время, движение только вперёд);
+- `monik/services/observability/context.py` — `CorrelationContext` на
+  `contextvars` (scan_id, v_id, k_id, request_id, provider, network,
+  operation), изолирован между конкурентными корутинами;
+- `monik/services/observability/redaction.py` — `SecretRegistry` и редакция
+  по именам полей и по шаблонам (Bearer, Telegram bot token в том числе
+  внутри URL, приватный ключ, `key=value`);
+- `monik/services/observability/logging.py` — `StructuredFormatter`:
+  одна JSON-строка на запись, поля корреляции, классификация ошибки;
+  редакция применяется к финальной строке, traceback не выводится.
+
+**Инварианты:** UNSUPPORTED отделён от временного сбоя · data error и ошибка
+аутентификации не повторяются · rate limit обрабатывается retry-политикой и
+не является признаком убыточности · бесконечные повторы невозможны.
+
+**Тестирование:** `pytest` ✅ **566 passed**; `ruff` ✅ · `ruff format` ✅ ·
+`mypy --strict` ✅ (81 модуль).
+
+Security-тесты (`tests/security/`) подтверждают, что секрет не появляется
+в выводе логгера ни на одном уровне — в сообщении, структурированном поле,
+тексте исключения и контексте корреляции.
+
+---
+
 ## GIT COMMITS
 
 | Этап | Commit | Описание |
@@ -126,6 +159,8 @@ frozen с `extra="forbid"`.
 | S0 | `5b58af8` | `chore: bootstrap project structure, tooling and CI` |
 | S0 | `d87328e` | `docs: update development status after stage S0` |
 | S1 | `d434557` | `feat: add canonical domain models, enums and value objects` |
+| S1 | `bcd9a93` | `docs: update development status after stage S1` |
+| S2 | `316d14e` | `feat: add normalized error model, clock abstraction and redacting structured logger` |
 
 ---
 
@@ -137,8 +172,8 @@ frozen с `extra="forbid"`.
 |---|---|---|
 | S0 | Project foundation, tooling, CI | ✅ |
 | S1 | Domain models, enums, value objects | ✅ |
-| S2 | Errors, Clock, structured logging + redaction | 🔜 следующий |
-| S3 | Configuration subsystem | ⬜ |
+| S2 | Errors, Clock, structured logging + redaction | ✅ |
+| S3 | Configuration subsystem | 🔜 следующий |
 | S4 | SQLite, schema, migrations, transactions | ⬜ |
 | S5 | Repositories | ⬜ |
 | S6 | Token/Network/Provider/Capability registries | ⬜ |
@@ -188,19 +223,30 @@ Telegram API заблокированы egress-политикой; ключей 
 
 ## СЛЕДУЮЩИЙ ШАГ
 
-**S2 — Errors, Clock, structured logging + redaction** согласно
-`DEVELOPMENT_PLAN.md` §5.
+**S3 — Configuration subsystem** согласно `DEVELOPMENT_PLAN.md` §5.
 
-Что нужно сделать (документацию перечитывать не требуется, enums уже готовы):
-- `monik/domain/errors/`: иерархия `MonikError` по категориям из
-  `ErrorCategory`, с полями code / category / severity / retryable /
-  subsystem / operation / timestamp / correlation_id / provider_code /
-  http_status / retry_after; классификация retryable / non-retryable /
-  conditionally-retryable;
-- `monik/services/observability/clock.py`: `Clock` protocol, `SystemClock`,
-  `FakeClock` (детерминированное время для тестов);
-- `monik/services/observability/logging.py`: structured JSON logger,
-  correlation context, **redaction filter** (bot token, API keys,
-  `Authorization`, приватные ключи).
+Что нужно сделать (документацию перечитывать не требуется — контракты
+зафиксированы ниже):
+- pydantic-схемы секций: `application`, `networks`, `providers`, `tokens`,
+  `routes`, `scanner.level1`, `scanner.level2`, `profitability`, `fees`,
+  `gas`, `prices`, `resources`, `scheduler`, `notifications.telegram`,
+  `database`, `logging`, `metrics`;
+- loader: YAML → env overrides → defaults → validation → normalization →
+  immutable `Configuration` + детерминированный `config_version`;
+- разрешение секрет-ссылок `{env: "MONIK_..."}` с регистрацией значений
+  в `SecretRegistry` (уже готов в S2);
+- cross-field и cross-subsystem валидация: enabled provider ↔ enabled network,
+  tokens ↔ networks, routes ↔ tokens/providers, amounts ↔ token precision,
+  минимум по одной enabled network / provider / token / amount;
+- валидация `HH:MM`, IANA timezone, Decimal-сумм, диапазонов, enum;
+- diagnostics-представление с `[REDACTED]`;
+- финализировать `config/config.example.yaml` и `.env.example`.
 
-Обязательный тест этапа: секрет никогда не появляется в выводе логгера.
+Дефолты, которые обязана поддерживать конфигурация:
+scan interval 300 с · overlap SKIP · threshold 1.00 % net ROI (сравнение `>=`) ·
+top 30 tokens · `level2.max_parallel` 20 · retry `max_attempts` 3 ·
+maintenance startup + daily (`interval_days`, `time`, `timezone`).
+
+Обязательные тесты этапа: невалидная конфигурация останавливает старт;
+секреты не появляются в diagnostics и в текстах ошибок; env override работает;
+Decimal не приводится к float; reload откатывается к последней валидной версии.
