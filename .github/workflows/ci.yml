@@ -30,10 +30,10 @@ jobs:
         run: uv sync --python 3.12 --group dev
 
       - name: Lint
-        run: .venv/bin/ruff check monik tests conftest.py
+        run: .venv/bin/ruff check monik tests scripts conftest.py
 
       - name: Format check
-        run: .venv/bin/ruff format --check monik tests conftest.py
+        run: .venv/bin/ruff format --check monik tests scripts conftest.py
 
       - name: Type check
         run: .venv/bin/mypy monik

@@ -100,20 +100,24 @@ class HttpProviderAdapter:
         network_id: NetworkId,
         operation: CapabilityOperation,
         request_id: RequestId,
+        method: str = "GET",
         params: dict[str, str] | None = None,
+        json_body: Any = None,
         priority: RequestPriority = RequestPriority.LEVEL1_BUY,
         correlation_id: CorrelationId | None = None,
         timeout: timedelta | None = None,
         deduplication_key: str | None = None,
         batch_units: int = 1,
     ) -> Any:
-        """Выполнить GET-запрос и вернуть разобранный JSON."""
+        """Выполнить запрос и вернуть разобранный JSON."""
         response = await self.request(
             path=path,
             network_id=network_id,
             operation=operation,
             request_id=request_id,
+            method=method,
             params=params,
+            json_body=json_body,
             priority=priority,
             correlation_id=correlation_id,
             timeout=timeout,
@@ -129,14 +133,20 @@ class HttpProviderAdapter:
         network_id: NetworkId,
         operation: CapabilityOperation,
         request_id: RequestId,
+        method: str = "GET",
         params: dict[str, str] | None = None,
+        json_body: Any = None,
         priority: RequestPriority = RequestPriority.LEVEL1_BUY,
         correlation_id: CorrelationId | None = None,
         timeout: timedelta | None = None,
         deduplication_key: str | None = None,
         batch_units: int = 1,
     ) -> HttpResponse:
-        """Выполнить GET-запрос через Resource Manager."""
+        """Выполнить запрос через Resource Manager.
+
+        Метод и тело задаются адаптером: одни провайдеры принимают
+        параметры в query, другие — в теле POST-запроса.
+        """
         url = f"{self._base_url}{path}"
         effective_timeout = timeout or timedelta(seconds=self._config.request_timeout_seconds)
         resource_request = ResourceRequest(
@@ -158,10 +168,11 @@ class HttpProviderAdapter:
         async def call() -> HttpResponse:
             response = await self._http.send(
                 HttpRequest(
-                    method="GET",
+                    method=method,
                     url=url,
                     headers=self.auth_headers(),
                     params=params or {},
+                    json_body=json_body,
                     request_id=request_id,
                     timeout_seconds=effective_timeout.total_seconds(),
                 )

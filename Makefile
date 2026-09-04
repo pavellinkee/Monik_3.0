@@ -23,10 +23,10 @@ install:
 	uv sync --python $(PYTHON_VERSION) --group dev
 
 lint:
-	$(VENV)/bin/ruff check monik tests conftest.py
+	$(VENV)/bin/ruff check monik tests scripts conftest.py
 
 format:
-	$(VENV)/bin/ruff format monik tests conftest.py
+	$(VENV)/bin/ruff format monik tests scripts conftest.py
 
 format-check:
 	$(VENV)/bin/ruff format --check monik tests
