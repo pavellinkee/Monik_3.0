@@ -12,10 +12,10 @@
 |---|---|
 | Дата обновления | 2026-09-04 |
 | Ветка | `claude/monik-implementation` |
-| Последний завершённый этап | **S15 — Notification System + Telegram (исходящие)** |
-| Следующий этап | **S16 — Telegram commands (входящие)** |
+| Последний завершённый этап | **S19 — Observability** |
+| Следующий этап | **S20 — Application wiring, startup, shutdown, recovery** |
 | Статус разработки | ▶ идёт автономная разработка по DEVELOPMENT_PLAN.md |
-| Тесты | 2595 passed |
+| Тесты | 2860 passed |
 | Проверки | ruff ✅ · ruff format ✅ · mypy --strict ✅ · pytest ✅ |
 
 ---
@@ -631,6 +631,90 @@ Opportunity настоящим Level 1 на тех же адаптерах, по
 
 ---
 
+### S16 — Telegram commands (входящие) ✅
+
+**Реализовано (`monik/services/commands/`, `monik/infrastructure/telegram/polling.py`):**
+- разбор `/details K1234`, `/level2`, `/status`, `/stats` и callback кнопки
+  `об`; суффикс `@botname` отбрасывается; некорректный ввод даёт явный
+  результат разбора, а не ошибку подсистемы;
+- `CommandRouter` — **только read-порты**: Job, уведомления, снимок
+  состояния и статистика. `/stats` показывает confirmation rate по формуле
+  `CLAUDE.md §27` с `N/A` при отсутствии решений;
+- `CommandService` — обработка отдельной задачей (Telegram не блокирует
+  Scanner), offset переживает рестарт, повторные `update_id` отбрасываются,
+  источник команды проверяется по конфигурации;
+- `TelegramUpdateSource` — `getUpdates` / `answerCallbackQuery` через
+  Resource Manager с фоновым приоритетом; некорректный ответ даёт ошибку
+  данных, а не молчаливую потерю обновлений;
+- `SqliteMetadataRepository` — key-value состояние поверх `app_metadata`.
+
+**Ключевое:** ответ формируется из сохранённых данных — команда не может
+инициировать provider-запрос (`CLAUDE.md §35`, проверено тестом).
+
+---
+
+### S17 — Scheduler ✅
+
+**Реализовано (`monik/services/scheduler/`):**
+- `timing.py` — расчёт следующего запуска. Timezone задаётся явно
+  (`14 §9`), фиксированный UTC offset не используется (`14 §10`):
+  несуществующее при переходе на летнее время локальное время сдвигается
+  вперёд, неоднозначное выполняется один раз. Пропущенные интервалы дают
+  **один** запуск, а не серию догоняющих (`14 §34, §53`);
+- `registry.py` — расписание из конфигурации пользователя с default'ом,
+  порядок старта по явным зависимостям Resource Manager → Registries →
+  Fee System → Scanner (`14 §36`), цикл зависимостей отклоняется;
+- `runner.py` — overlap policy (`14 §27-28`), timeout как отказ, а не
+  бесконечный retry (`14 §51`), изоляция сбоя задачи (`14 §43`);
+- `scheduler.py` — `prepare` / `run_startup` / `tick` / `trigger` /
+  `shutdown`; расписание восстанавливается от последнего успеха
+  (`14 §35`), повторный startup не создаёт дубликат.
+
+---
+
+### S18 — Health Monitoring и Supervisor ✅
+
+**Реализовано (`monik/services/health/`, `monik/app/supervisor.py`):**
+- `HealthMonitor` — состояние подсистем и провайдеров; `UNKNOWN` не
+  означает `HEALTHY`; гистерезис из отдельных порогов деградации, отказа и
+  восстановления защищает от flapping (`19 §49-52`); сводный статус
+  определяется критическими подсистемами (`19 §9-10`), недоступность
+  одного провайдера не делает приложение недоступным (`19 §12`);
+- **health только описывает состояние**: он не меняет бизнес-данные и не
+  равен ни capability, ни profitability (`19 §54-56`);
+- `Supervisor` — перезапуск некритического worker'а с лимитом; критическая
+  ошибка persistence и падение критического worker'а переводят систему в
+  **`SAFE_STOP`** (`CLAUDE.md §34`); graceful shutdown.
+
+Добавлена секция конфигурации `health` и доменный enum `SupervisorState`.
+
+---
+
+### S19 — Observability ✅
+
+**Реализовано (`monik/services/observability/`):**
+- `metrics.py` — `MetricsRegistry`: счётчики, длительности и gauge с
+  проверкой labels. Набор label ограничен (`28 §41`), идентификаторы и
+  произвольный текст отклоняются как high cardinality (`28 §42`), секрет
+  в метрику не попадает (`28 §43`);
+- `names.py` — централизованный список метрик Level 1/Level 2/провайдеров/
+  уведомлений/планировщика/очередей/БД (`28 §29-40`);
+- `events.py` — `TransitionRecorder`: критический переход фиксируется как
+  факт с correlation id текущего workflow (`35 §118`, `28 §25`).
+
+`StateTransitionRecord` перенесён в domain: модель перехода принадлежит
+домену, репозиторий её только сохраняет.
+
+Метрики подключены к Level 1, Level 2, Notification System и Scheduler
+через необязательный параметр.
+
+**Тестирование:** `pytest` ✅ **2860 passed**; `ruff` ✅ · `ruff format` ✅ ·
+`mypy --strict` ✅ (215 модулей). Security regression подтверждает, что
+секрет не появляется в сообщении, структурированном поле, тексте
+исключения, контексте корреляции, метриках и диагностике конфигурации.
+
+---
+
 ## GIT COMMITS
 
 | Этап | Commit | Описание |
@@ -671,6 +755,11 @@ Opportunity настоящим Level 1 на тех же адаптерах, по
 | S13 | `eb4c71c` | `feat: implement level 2 scanner with fixed-route confirmation` |
 | S14 | `4f0b196` | `feat: add opportunity service with immutable financial snapshot` |
 | S15 | `e57ac4c` | `feat: implement notification system with telegram delivery and 'об' button` |
+| S15 | `f671e3a` | `docs: update development status after stages S13-S15` |
+| S16 | `34a55dc` | `feat: add telegram command handlers and 'об' callback` |
+| S17 | `1a2d9f9` | `feat: implement scheduler with startup, interval and daily tasks` |
+| S18 | `16ffd4e` | `feat: add health monitoring and supervisor with safe stop` |
+| S19 | `a8fff3d` | `feat: add structured observability, metrics and correlation context` |
 
 ---
 
@@ -700,11 +789,11 @@ Opportunity настоящим Level 1 на тех же адаптерах, по
 | S13 | Level 2 Scanner | ✅ |
 | S14 | Opportunity Service | ✅ |
 | S15 | Notification System + Telegram delivery + кнопка `об` | ✅ |
-| S16 | Telegram commands | 🔜 следующий |
-| S17 | Scheduler | ⬜ |
-| S18 | Health Monitoring + Supervisor | ⬜ |
-| S19 | Observability | ⬜ |
-| S20 | App wiring, startup, recovery, shutdown | ⬜ |
+| S16 | Telegram commands | ✅ |
+| S17 | Scheduler | ✅ |
+| S18 | Health Monitoring + Supervisor | ✅ |
+| S19 | Observability | ✅ |
+| S20 | App wiring, startup, recovery, shutdown | 🔜 следующий |
 | S21 | Integration / E2E тесты | ⬜ |
 | S22 | Recovery / crash тесты | ⬜ |
 | S23 | Architecture + security тесты | ⬜ |
@@ -733,20 +822,25 @@ Telegram API заблокированы egress-политикой; ключей 
 
 ## СЛЕДУЮЩИЙ ШАГ
 
-**S16 — Telegram commands (входящие)** согласно `DEVELOPMENT_PLAN.md` §5.
+**S20 — Application wiring, startup, shutdown, recovery** согласно
+`DEVELOPMENT_PLAN.md` §5 и порядку `CLAUDE.md` §30:
+
+1. загрузить configuration; 2. открыть SQLite; 3. проверить integrity;
+4. выполнить migrations; 5. восстановить незавершённое состояние;
+6. инициализировать adapters; 7. Resource Manager; 8. Scheduler;
+9. Telegram; 10. запустить workers.
 
 Что нужно сделать:
-- входящий канал Telegram (решение D-2): long polling через Resource
-  Manager, offset сохраняется, дубликаты `update_id` отбрасываются;
-- команды `/details K1234`, `/level2`, `/status`, `/stats` и обработка
-  нажатия кнопки `об`;
-- **ответ формируется из сохранённого snapshot: новых внешних запросов
-  не выполняется** (`CLAUDE.md` §35);
-- проверка источника команды (разрешённый chat id), некорректный ввод не
-  приводит к ошибке подсистемы;
-- Telegram не блокирует Scanner (`CLAUDE.md` §35).
+- composition root (`monik/app/`): сборка всех подсистем из конфигурации,
+  без бизнес-логики в entrypoint;
+- recovery: Level 2 в статусе `RUNNING` после аварии становится
+  `INTERRUPTED`/новая попытка, старые quotes свежими не считаются, runtime
+  locks не восстанавливаются (`CLAUDE.md §30`); уведомления в `SENDING`
+  возвращаются в очередь;
+- graceful shutdown: новые циклы не создаются, активные корректно
+  завершаются, состояние сохраняется;
+- рабочий `monik` entrypoint вместо текущей заглушки.
 
-Готово для этапа: `SqliteNotificationRepository.load_texts` (тексты кнопки
-`об`), `SqliteJobRepository.load_confirmation`, `SqliteOpportunityRepository`,
-`ConfirmationStatistics`, `TelegramNotificationAdapter` и endpoints
-`getUpdates` / `answerCallbackQuery`.
+Все подсистемы для этого готовы: Level 1/Level 2, Opportunity Service,
+Notification System и Telegram, команды, Scheduler, Health/Supervisor,
+Observability, репозитории и миграции.
