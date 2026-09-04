@@ -60,9 +60,7 @@ async def run(config_path: str, backup: str, *, force: bool) -> int:
         sys.stderr.write(f"restore_db: backup not found: {source}\n")
         return 1
     if target.exists() and not force:
-        sys.stderr.write(
-            f"restore_db: {target} already exists; pass --force to overwrite it\n"
-        )
+        sys.stderr.write(f"restore_db: {target} already exists; pass --force to overwrite it\n")
         return 1
 
     versions = await check_backup(source)

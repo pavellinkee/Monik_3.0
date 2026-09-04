@@ -73,9 +73,7 @@ def clock() -> FakeClock:
 
 @pytest.fixture
 async def database(tmp_path: pathlib.Path) -> AsyncIterator[Database]:
-    instance = Database(
-        DatabaseConfig(path=str(tmp_path / "perf.db"), busy_timeout_seconds=1.0)
-    )
+    instance = Database(DatabaseConfig(path=str(tmp_path / "perf.db"), busy_timeout_seconds=1.0))
     await instance.connect()
     await MigrationRunner(instance).upgrade()
     try:
@@ -143,7 +141,10 @@ async def test_level1_scans_all_tokens(database: Database, clock: FakeClock) -> 
     """Цикл покрывает все токены и суммы scope."""
     adapters = counting_adapters(clock)
     harness = build_harness(
-        configured(), database, clock, adapters=adapters  # type: ignore[arg-type]
+        configured(),
+        database,
+        clock,
+        adapters=adapters,  # type: ignore[arg-type]
     )
 
     result = await harness.scanner.scan()
@@ -194,9 +195,7 @@ async def test_opportunity_limit_bounds_created_records(
     assert row is not None and row["count"] <= 2
 
 
-async def test_backpressure_stops_unbounded_handoff(
-    database: Database, clock: FakeClock
-) -> None:
+async def test_backpressure_stops_unbounded_handoff(database: Database, clock: FakeClock) -> None:
     """Переполненная очередь Level 2 останавливает передачу (``02`` §47)."""
     dispatcher = RecordingDispatcher(capacity=1)
     harness = build_harness(
@@ -216,9 +215,7 @@ async def test_backpressure_stops_unbounded_handoff(
 # --- очередь Level 2 ------------------------------------------------------
 
 
-async def test_level2_queue_rejects_overflow(
-    database: Database, clock: FakeClock
-) -> None:
+async def test_level2_queue_rejects_overflow(database: Database, clock: FakeClock) -> None:
     """Очередь Level 2 не растёт бесконечно (``03`` §69)."""
     harness = await build_level2(
         parse_configuration(level1_document(), environ=dict(VALID_ENV)).config,
@@ -262,20 +259,19 @@ async def test_level2_parallelism_never_exceeds_configuration(
 # --- рост состояния -------------------------------------------------------
 
 
-async def test_repeated_scans_do_not_grow_state(
-    database: Database, clock: FakeClock
-) -> None:
+async def test_repeated_scans_do_not_grow_state(database: Database, clock: FakeClock) -> None:
     """Повторные циклы не создают неограниченного числа возможностей."""
     harness = build_harness(
-        configured(), database, clock, adapters=counting_adapters(clock)  # type: ignore[arg-type]
+        configured(),
+        database,
+        clock,
+        adapters=counting_adapters(clock),  # type: ignore[arg-type]
     )
 
     for _ in range(5):
         await harness.scanner.scan()
 
-    opportunities = await database.fetch_one(
-        "SELECT COUNT(*) AS count FROM opportunities", ()
-    )
+    opportunities = await database.fetch_one("SELECT COUNT(*) AS count FROM opportunities", ())
     scans = await database.fetch_one("SELECT COUNT(*) AS count FROM scans", ())
     assert opportunities is not None and scans is not None
     # Дедупликация удерживает число возможностей, хотя циклов было пять.
@@ -283,14 +279,15 @@ async def test_repeated_scans_do_not_grow_state(
     assert opportunities["count"] < scans["count"] * TOKEN_COUNT
 
 
-async def test_finished_scans_are_cleaned_up(
-    database: Database, clock: FakeClock
-) -> None:
+async def test_finished_scans_are_cleaned_up(database: Database, clock: FakeClock) -> None:
     """Retention удаляет завершённые циклы (``31_DATA_RETENTION.md``)."""
     from monik.repositories.sqlite import SqliteScanRepository
 
     harness = build_harness(
-        configured(), database, clock, adapters=counting_adapters(clock)  # type: ignore[arg-type]
+        configured(),
+        database,
+        clock,
+        adapters=counting_adapters(clock),  # type: ignore[arg-type]
     )
     await harness.scanner.scan()
     clock.advance(timedelta(days=30))
@@ -302,19 +299,18 @@ async def test_finished_scans_are_cleaned_up(
     assert row is not None and row["count"] == 0
 
 
-async def test_quote_history_is_not_persisted(
-    database: Database, clock: FakeClock
-) -> None:
+async def test_quote_history_is_not_persisted(database: Database, clock: FakeClock) -> None:
     """Полный поток котировок не сохраняется (``02`` §86)."""
     harness = build_harness(
-        configured(), database, clock, adapters=counting_adapters(clock)  # type: ignore[arg-type]
+        configured(),
+        database,
+        clock,
+        adapters=counting_adapters(clock),  # type: ignore[arg-type]
     )
 
     result = await harness.scanner.scan()
 
-    tables = await database.fetch_all(
-        "SELECT name FROM sqlite_master WHERE type = 'table'", ()
-    )
+    tables = await database.fetch_all("SELECT name FROM sqlite_master WHERE type = 'table'", ())
     names = {str(row["name"]) for row in tables}
     assert "quotes" not in names
     assert result.scan.statistics.quote_requests > len(result.opportunities)

@@ -38,9 +38,7 @@ def test_init_db_is_idempotent(config_path: pathlib.Path) -> None:
     assert init_db.main(["--config", str(config_path)]) == 0
 
 
-def test_backup_and_restore_round_trip(
-    config_path: pathlib.Path, tmp_path: pathlib.Path
-) -> None:
+def test_backup_and_restore_round_trip(config_path: pathlib.Path, tmp_path: pathlib.Path) -> None:
     """Резервная копия проверяется и восстанавливается."""
     assert init_db.main(["--config", str(config_path)]) == 0
     backups = tmp_path / "backups"
@@ -51,12 +49,7 @@ def test_backup_and_restore_round_trip(
 
     database_path = tmp_path / "monik.db"
     database_path.unlink()
-    assert (
-        restore_db.main(
-            ["--config", str(config_path), "--backup", str(created[0])]
-        )
-        == 0
-    )
+    assert restore_db.main(["--config", str(config_path), "--backup", str(created[0])]) == 0
     assert database_path.is_file()
 
 
@@ -69,28 +62,19 @@ def test_restore_refuses_to_overwrite_silently(
     assert backup_db.main(["--config", str(config_path), "--output", str(backups)]) == 0
     created = sorted(backups.glob("monik-*.db"))
 
+    assert restore_db.main(["--config", str(config_path), "--backup", str(created[0])]) == 1
     assert (
-        restore_db.main(["--config", str(config_path), "--backup", str(created[0])]) == 1
-    )
-    assert (
-        restore_db.main(
-            ["--config", str(config_path), "--backup", str(created[0]), "--force"]
-        )
-        == 0
+        restore_db.main(["--config", str(config_path), "--backup", str(created[0]), "--force"]) == 0
     )
 
 
-def test_backup_reports_missing_database(
-    config_path: pathlib.Path, tmp_path: pathlib.Path
-) -> None:
+def test_backup_reports_missing_database(config_path: pathlib.Path, tmp_path: pathlib.Path) -> None:
     """Отсутствующая база — явная ошибка, а не пустая копия."""
     assert backup_db.main(["--config", str(config_path), "--output", str(tmp_path)]) == 1
 
 
 def test_restore_reports_missing_backup(config_path: pathlib.Path) -> None:
-    assert (
-        restore_db.main(["--config", str(config_path), "--backup", "missing.db"]) == 1
-    )
+    assert restore_db.main(["--config", str(config_path), "--backup", "missing.db"]) == 1
 
 
 async def test_restored_database_passes_integrity_check(
