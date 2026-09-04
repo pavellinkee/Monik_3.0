@@ -34,6 +34,11 @@ async def _tables(database: Database) -> set[str]:
     return {str(row["name"]) for row in rows if not str(row["name"]).startswith("sqlite_")}
 
 
+async def _columns(database: Database, table: str) -> set[str]:
+    rows = await database.fetch_all(f"PRAGMA table_info({table})")
+    return {str(row["name"]) for row in rows}
+
+
 async def _indexes(database: Database) -> set[str]:
     rows = await database.fetch_all("SELECT name FROM sqlite_master WHERE type = 'index'")
     return {str(row["name"]) for row in rows if str(row["name"]).startswith("idx_")}
@@ -47,8 +52,17 @@ class TestFreshDatabase:
     async def test_records_applied_version(self, database: Database) -> None:
         runner = MigrationRunner(database)
         applied = await runner.upgrade()
-        assert applied == (1,)
-        assert await runner.current_version() == 1
+        expected = tuple(migration.version for migration in ALL_MIGRATIONS)
+        assert applied == expected
+        assert await runner.current_version() == expected[-1]
+
+    async def test_confirmation_snapshot_columns_exist(self, database: Database) -> None:
+        """Миграция 0002 добавляет колонки для восстановления снимков."""
+        await MigrationRunner(database).upgrade()
+        amounts = await _columns(database, "opportunity_amounts")
+        results = await _columns(database, "level2_amount_results")
+        assert "preliminary_result_json" in amounts
+        assert {"buy_quote_json", "sell_quote_json"} <= results
 
     async def test_creates_expected_indexes(self, database: Database) -> None:
         await MigrationRunner(database).upgrade()
