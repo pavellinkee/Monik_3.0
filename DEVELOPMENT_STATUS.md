@@ -12,10 +12,10 @@
 |---|---|
 | Дата обновления | 2026-09-04 |
 | Ветка | `claude/monik-implementation` |
-| Последний завершённый этап | **S0 — Project Foundation** |
-| Следующий этап | **S1 — Domain: enums, value objects, models** |
+| Последний завершённый этап | **S1 — Domain: enums, value objects, models** |
+| Следующий этап | **S2 — Errors, Clock, structured logging + redaction** |
 | Статус разработки | ▶ идёт автономная разработка по DEVELOPMENT_PLAN.md |
-| Тесты | 37 passed |
+| Тесты | 466 passed |
 | Проверки | ruff ✅ · ruff format ✅ · mypy --strict ✅ · pytest ✅ |
 
 ---
@@ -81,6 +81,42 @@ pytest-asyncio 0.26.0 в соответствии с пинами `pyproject.tom
 
 ---
 
+### S1 — Domain: enums, value objects, models ✅
+
+**Реализовано (`monik/domain/`, 33 модуля):**
+- **enums** — стабильные строковые значения (часть контракта БД): providers,
+  operations и routing modes, quote status, fee types/status/inclusion,
+  calculation status и threshold metric, lifecycle (Opportunity, Job,
+  per-amount verification и confirmation, notification, scan, task execution),
+  capability, health, errors, resources (priority с рангом, circuit state),
+  notification modes, scheduler modes и overlap policy;
+- **value objects** — числовые типы, отклоняющие `float`; timezone-aware UTC
+  timestamps; `NetworkId` / `TokenAddress` / `TokenSymbol` с нормализацией;
+  идентификаторы `#V` / `#K` в раздельных пространствах; детерминированные
+  fingerprints; `TokenAmount` (raw base units + decimals) и `Percentage`;
+- **models** — Network, Token, Provider, Route/RouteStep, Quote,
+  Fee/FeeKey/FeeSnapshot, Gas/GasPrice, ConversionRate,
+  ProfitCalculationInput/CostBreakdown/ThresholdOutcome/ProfitResult,
+  Opportunity/OpportunityAmount/Candidate/RouteSnapshot,
+  Level2Job/Level2Attempt/AmountVerificationResult/ConfirmationResult,
+  Notification, Scan, Capability, Health, Resource, Scheduler.
+
+**Инварианты, закреплённые кодом и тестами:**
+UNKNOWN fee/gas не имеют суммы и не равны нулю · `included_in_quote` защищает
+от двойного учёта · SELL считается от текущего BUY output · один route snapshot
+на все суммы · ROUTE_UNAVAILABLE ≠ UNPROFITABLE · PARTIAL ≠ CONFIRMED ·
+UNKNOWN capability ≠ SUPPORTED · очередь Level 2 > Level 1 SELL > Level 1 BUY >
+Maintenance · порядок уведомлений по `created_at` + sequence.
+
+**Тестирование:** `pytest` ✅ **466 passed** (unit + architecture);
+`ruff` ✅ · `ruff format` ✅ · `mypy --strict` ✅ (73 модуля).
+
+Architecture-тесты проверяют, что domain не импортирует HTTP/SQLite/Telegram/
+верхние слои, не читает environment, не использует `float`, а все модели
+frozen с `extra="forbid"`.
+
+---
+
 ## GIT COMMITS
 
 | Этап | Commit | Описание |
@@ -88,6 +124,8 @@ pytest-asyncio 0.26.0 в соответствии с пинами `pyproject.tom
 | S-A | `ae34f99` | `docs: add development plan and status tracking` |
 | S-B | `d8d2f64` | `docs: fix accepted architectural decisions D-1..D-6 in development plan` |
 | S0 | `5b58af8` | `chore: bootstrap project structure, tooling and CI` |
+| S0 | `d87328e` | `docs: update development status after stage S0` |
+| S1 | `d434557` | `feat: add canonical domain models, enums and value objects` |
 
 ---
 
@@ -98,8 +136,8 @@ pytest-asyncio 0.26.0 в соответствии с пинами `pyproject.tom
 | Этап | Модуль | Статус |
 |---|---|---|
 | S0 | Project foundation, tooling, CI | ✅ |
-| S1 | Domain models, enums, value objects | 🔜 следующий |
-| S2 | Errors, Clock, structured logging + redaction | ⬜ |
+| S1 | Domain models, enums, value objects | ✅ |
+| S2 | Errors, Clock, structured logging + redaction | 🔜 следующий |
 | S3 | Configuration subsystem | ⬜ |
 | S4 | SQLite, schema, migrations, transactions | ⬜ |
 | S5 | Repositories | ⬜ |
@@ -150,13 +188,19 @@ Telegram API заблокированы egress-политикой; ключей 
 
 ## СЛЕДУЮЩИЙ ШАГ
 
-**S1 — Domain: enums, value objects, models** согласно `DEVELOPMENT_PLAN.md` §5.
+**S2 — Errors, Clock, structured logging + redaction** согласно
+`DEVELOPMENT_PLAN.md` §5.
 
-Ключевое для S1 (уже зафиксировано, документацию перечитывать не требуется):
-- `Opportunity` — сущность Level 1 с `#V`-ID, единый lifecycle
-  `CREATED → VERIFYING → {CONFIRMED, PARTIAL, UNPROFITABLE, ROUTE_UNAVAILABLE,
-  EXPIRED, FAILED, CANCELLED} → {NOTIFIED, NOTIFIED_PARTIAL, NOTIFIED_FAILED}`;
-- `Level2Job` — `#K`-ID, отдельное пространство идентификаторов;
-- `Candidate` — промежуточный value object Level 1, не персистится;
-- `int` для raw base units, `Decimal` для денег и процентов, `float` запрещён;
-- все timestamps — timezone-aware UTC.
+Что нужно сделать (документацию перечитывать не требуется, enums уже готовы):
+- `monik/domain/errors/`: иерархия `MonikError` по категориям из
+  `ErrorCategory`, с полями code / category / severity / retryable /
+  subsystem / operation / timestamp / correlation_id / provider_code /
+  http_status / retry_after; классификация retryable / non-retryable /
+  conditionally-retryable;
+- `monik/services/observability/clock.py`: `Clock` protocol, `SystemClock`,
+  `FakeClock` (детерминированное время для тестов);
+- `monik/services/observability/logging.py`: structured JSON logger,
+  correlation context, **redaction filter** (bot token, API keys,
+  `Authorization`, приватные ключи).
+
+Обязательный тест этапа: секрет никогда не появляется в выводе логгера.
