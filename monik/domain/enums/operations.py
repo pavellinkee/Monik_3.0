@@ -16,6 +16,19 @@ class OperationType(DomainEnum):
     SELL = "sell"
 
 
+class RouteValidationOutcome(DomainEnum):
+    """Итог проверки зафиксированного маршрута Level 2.
+
+    Соответствует ``06_AGGREGATOR_ADAPTERS.md`` §50-52: если API не умеет
+    воспроизводить маршрут — ``UNSUPPORTED``; если вернул другой маршрут —
+    ``MISMATCH``. Молча принимать альтернативный маршрут запрещено.
+    """
+
+    REPRODUCED = "reproduced"
+    MISMATCH = "mismatch"
+    UNSUPPORTED = "unsupported"
+
+
 class RoutingMode(DomainEnum):
     """Normalized routing mode.
 

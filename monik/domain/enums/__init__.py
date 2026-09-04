@@ -24,7 +24,11 @@ from monik.domain.enums.lifecycle import (
     TaskExecutionStatus,
 )
 from monik.domain.enums.notifications import DestinationKind, NotificationMode
-from monik.domain.enums.operations import OperationType, RoutingMode
+from monik.domain.enums.operations import (
+    OperationType,
+    RouteValidationOutcome,
+    RoutingMode,
+)
 from monik.domain.enums.providers import ProviderId
 from monik.domain.enums.quotes import QuoteStatus
 from monik.domain.enums.resources import (
@@ -64,6 +68,7 @@ __all__ = [
     "ResourceResultStatus",
     "ResourceState",
     "Retryability",
+    "RouteValidationOutcome",
     "RoutingMode",
     "ScanStatus",
     "TaskExecutionStatus",
