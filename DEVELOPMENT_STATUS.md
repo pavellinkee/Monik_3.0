@@ -12,10 +12,10 @@
 |---|---|
 | Дата обновления | 2026-09-04 |
 | Ветка | `claude/monik-implementation` |
-| Последний завершённый этап | **S7 — HTTP infrastructure** |
-| Следующий этап | **S8 — Resource Manager** |
+| Последний завершённый этап | **S8 — Resource Manager** |
+| Следующий этап | **S9.0 — Adapter contract + contract test suite + FakeAdapter** |
 | Статус разработки | ▶ идёт автономная разработка по DEVELOPMENT_PLAN.md |
-| Тесты | 1355 passed |
+| Тесты | 1427 passed |
 | Проверки | ruff ✅ · ruff format ✅ · mypy --strict ✅ · pytest ✅ |
 
 ---
@@ -303,6 +303,28 @@ Security-тесты: заголовок авторизации и API-ключ �
 
 ---
 
+### S8 — Resource Manager ✅
+
+**Реализовано (`monik/services/resources/`):**
+- `RetryPolicy` — ограниченный бюджет попыток, экспоненциальный backoff,
+  jitter в границах, приоритет `Retry-After`;
+- `CircuitBreaker` — `CLOSED/OPEN/HALF_OPEN`, ограничение пробных вызовов,
+  восстановление; **не изменяет** Capability Registry;
+- `RateLimiter` — token bucket с явной стоимостью batch-запроса;
+- `PriorityGate` — очередь по приоритету, затем `created_at` и `sequence`;
+  backpressure, таймаут ожидания, гарантированный возврат слота при отмене;
+- `InFlightRegistry` — объединение одинаковых одновременных запросов;
+- `ResourceManager` — иерархический захват ворот в детерминированном
+  порядке, timeout, retry, circuit breaker per resource, дедупликация,
+  метрики задержек.
+
+Время и ожидание инъектируются (`Clock`, `Sleeper`) — тесты детерминированы.
+
+**Тестирование:** `pytest` ✅ **1427 passed**; `ruff` ✅ · `ruff format` ✅ ·
+`mypy --strict` ✅ (139 модулей).
+
+---
+
 ## GIT COMMITS
 
 | Этап | Commit | Описание |
@@ -325,6 +347,8 @@ Security-тесты: заголовок авторизации и API-ключ �
 | S6 | `f7e73e9` | `feat: add token, network, provider and capability registries` |
 | S6 | `61eec08` | `docs: update development status after stage S6` |
 | S7 | `03b8997` | `feat: add controlled async http client with ssrf and tls safeguards` |
+| S7 | `b687649` | `docs: update development status after stage S7` |
+| S8 | `ccca655` | `feat: implement resource manager with priorities, rate limits, retry and circuit breaker` |
 
 ---
 
@@ -342,8 +366,8 @@ Security-тесты: заголовок авторизации и API-ключ �
 | S5 | Repositories | ✅ |
 | S6 | Token/Network/Provider/Capability registries | ✅ |
 | S7 | HTTP infrastructure (TLS, SSRF, limits) | ✅ |
-| S8 | Resource Manager | 🔜 следующий |
-| S9.0 | Adapter contract + contract test suite + FakeAdapter | ⬜ |
+| S8 | Resource Manager | ✅ |
+| S9.0 | Adapter contract + contract test suite + FakeAdapter | 🔜 следующий |
 | S9.1 | 1inch adapter | ⬜ |
 | S9.2 | 0x adapter | ⬜ |
 | S9.3 | Velora adapter | ⬜ |
@@ -387,35 +411,26 @@ Telegram API заблокированы egress-политикой; ключей 
 
 ## СЛЕДУЮЩИЙ ШАГ
 
-**S8 — Resource Manager** согласно `DEVELOPMENT_PLAN.md` §5.
+**S9.0 — Общий контракт Aggregator Adapter** согласно `DEVELOPMENT_PLAN.md` §5.
 
-Что нужно сделать (`monik/services/resources/`):
-- resource key и иерархические лимиты (provider → provider+network →
-  provider+network+operation); модель `ResourceKey` уже есть в домене;
-- состояния ресурса `AVAILABLE/BUSY/RATE_LIMITED/COOLDOWN/CIRCUIT_OPEN`;
-- acquisition/lease с таймаутом и гарантированным release;
-- **priority queue**: Level 2 > Level 1 SELL > Level 1 BUY > Maintenance,
-  внутри приоритета — `created_at` + sequence (`ResourceRequest.ordering_key`
-  уже реализован);
-- concurrency limits и **отдельно** rate limits (sliding window / token
-  bucket) — это разные ограничения;
-- retry: `max_attempts=3`, exponential backoff + jitter, обязательный учёт
-  `Retry-After`, запрет retry-storm;
-- circuit breaker `CLOSED/OPEN/HALF_OPEN` с восстановлением; **не изменяет**
-  Capability Registry;
-- in-flight deduplication (одинаковые одновременные запросы объединяются,
-  семантика не меняется);
-- batch support с корректным rate-limit accounting;
-- backpressure, queue limits, отмена устаревших задач, graceful shutdown;
-- метрики: queue wait, execution latency, total latency.
+Что нужно сделать:
+- protocol `AggregatorAdapter`: `get_quote(request)`,
+  `validate_fixed_route(...)`, `discover_capabilities()`,
+  `discover_fees()`, `health_check()`, lifecycle
+  (`initialize/ready/degraded/shutdown`), `supported_networks`,
+  `routing_modes`;
+- нормализация: `Quote`, `Route`/`RouteStep`, `route_fingerprint`,
+  извлечение комиссий (`UNKNOWN`, не 0), gas, перевод ошибок провайдера
+  в категории `Temporary/Permanent/Data/Authentication/RateLimit/Unsupported`;
+- **общий contract test suite**, который обязан пройти каждый adapter;
+- `FakeAdapter` — детерминированная **test implementation** для
+  integration/E2E, явно помеченная как не production.
 
-Всё нужное уже готово: `RequestPriority.rank`, `ResourceRequest/ResourceResult`,
-`CircuitState`, `RetryConfig`/`CircuitBreakerConfig`/`ResourceConfig`,
-`Clock`/`FakeClock`, нормализованные ошибки и их классификация
-(`is_retryable`), `FakeHttpClient`.
+Все внешние вызовы адаптеров обязаны идти через `ResourceManager`
+(готов в S8) и `HttpClient` (готов в S7). Provider-specific код —
+только внутри каталога соответствующего адаптера.
 
-Обязательные тесты: конкурентность, переполнение очереди, таймаут, retry и
-backoff, jitter в границах, `Retry-After`, rate limit, переходы circuit
-breaker и восстановление, приоритеты (Level 2 обгоняет Level 1), запрет
-starvation, отмена, отсутствие утечки lease при исключении, дедупликация,
-batch accounting, параллельность независимых ресурсов.
+Далее подэтапы S9.1–S9.4: адаптеры 1inch, 0x, Velora, Uniswap.
+Каждый — отдельный commit; endpoints/params/auth локализованы в одном
+`endpoints.py` внутри адаптера; в docstring и финальном отчёте —
+пометка `API contract NOT verified against live endpoint` (решение D-3).
