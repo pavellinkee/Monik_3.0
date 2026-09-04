@@ -31,7 +31,39 @@ from monik.domain.value_objects.identifiers import OpportunityId, ScanId, VId
 from monik.domain.value_objects.identity import NetworkId
 from monik.domain.value_objects.timestamps import UtcDatetime
 
-__all__ = ["Candidate", "Opportunity", "OpportunityAmount", "RouteSnapshot"]
+__all__ = [
+    "Candidate",
+    "Opportunity",
+    "OpportunityAmount",
+    "RouteSnapshot",
+    "opportunity_fingerprint",
+]
+
+
+def opportunity_fingerprint(
+    *,
+    routes: RouteSnapshot,
+    buy_provider_id: ProviderId,
+    sell_provider_id: ProviderId,
+) -> OpportunityFingerprint:
+    """Детерминированный отпечаток логической возможности.
+
+    Учитывает сеть, тройку токенов, пару агрегаторов и отпечатки обоих
+    маршрутов (``10_LEVEL_1_SCANNER.md`` §53). Не зависит от случайного
+    идентификатора (``04_SCHEDULER.md`` §23), поэтому пригоден для
+    дедупликации ещё до создания самой Opportunity.
+    """
+    payload: dict[str, Any] = {
+        "network_id": str(routes.network_id),
+        "input_token": str(routes.input_token),
+        "intermediate_token": str(routes.intermediate_token),
+        "output_token": str(routes.output_token),
+        "buy_provider_id": buy_provider_id.value,
+        "sell_provider_id": sell_provider_id.value,
+        "buy_route_fingerprint": str(routes.buy_route.fingerprint),
+        "sell_route_fingerprint": str(routes.sell_route.fingerprint),
+    }
+    return OpportunityFingerprint(compute_fingerprint(payload))
 
 
 class RouteSnapshot(DomainModel):
@@ -218,22 +250,14 @@ class Opportunity(DomainModel):
     def fingerprint(self) -> OpportunityFingerprint:
         """Детерминированный отпечаток логической возможности.
 
-        Учитывает сеть, тройку токенов, пару агрегаторов и отпечатки обоих
-        маршрутов (``10_LEVEL_1_SCANNER.md`` §53). Не зависит от случайного
-        идентификатора (``04_SCHEDULER.md`` §23), поэтому пригоден для
-        дедупликации.
+        Вычисляется той же функцией, что использует Level 1 до создания
+        Opportunity, поэтому дедупликация и хранимое значение совпадают.
         """
-        payload: dict[str, Any] = {
-            "network_id": str(self.network_id),
-            "input_token": str(self.input_token),
-            "intermediate_token": str(self.intermediate_token),
-            "output_token": str(self.output_token),
-            "buy_provider_id": self.buy_provider_id.value,
-            "sell_provider_id": self.sell_provider_id.value,
-            "buy_route_fingerprint": str(self.routes.buy_route.fingerprint),
-            "sell_route_fingerprint": str(self.routes.sell_route.fingerprint),
-        }
-        return OpportunityFingerprint(compute_fingerprint(payload))
+        return opportunity_fingerprint(
+            routes=self.routes,
+            buy_provider_id=self.buy_provider_id,
+            sell_provider_id=self.sell_provider_id,
+        )
 
     def is_expired(self, now: UtcDatetime) -> bool:
         """Истёк ли срок, в течение которого возможность можно проверять."""
