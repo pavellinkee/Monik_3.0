@@ -5,10 +5,25 @@
 Скрипты не содержат дублирующей business logic — они вызывают интерфейсы приложения
 (`25_PROJECT_STRUCTURE.md` §41-42).
 
-Планируемые скрипты (создаются на соответствующих этапах `DEVELOPMENT_PLAN.md`):
+| Скрипт | Назначение |
+|---|---|
+| `verify_provider_api.py` | Реальная проверка контрактов провайдерских API (запускается в среде с сетевым доступом и ключами) |
+| `init_db.py` | Создание БД, применение migrations и проверка целостности |
+| `backup_db.py` | Online-backup SQLite с проверкой полученной копии |
+| `restore_db.py` | Восстановление из резервной копии (существующая БД не перезаписывается без `--force`) |
 
-| Скрипт | Этап | Назначение |
-|---|---|---|
-| `verify_provider_api.py` | S9 | Реальная проверка контрактов провайдерских API (запускается в среде с сетью и ключами) |
-| `init_db.py` | S25 | Инициализация БД и применение migrations |
-| `backup_db.py` / `restore_db.py` | S25 | Резервное копирование и восстановление SQLite |
+## Запуск
+
+```bash
+uv run python scripts/init_db.py    --config config/config.yaml
+uv run python scripts/backup_db.py  --config config/config.yaml --output backups/
+uv run python scripts/restore_db.py --config config/config.yaml --backup backups/monik-<ts>.db
+uv run python scripts/verify_provider_api.py --config config/config.yaml
+```
+
+Само приложение запускается собственной командой:
+
+```bash
+uv run monik --config config/config.yaml
+uv run monik --config config/config.yaml --check-config   # только валидация
+```

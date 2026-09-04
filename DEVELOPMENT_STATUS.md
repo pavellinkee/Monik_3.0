@@ -12,10 +12,10 @@
 |---|---|
 | Дата обновления | 2026-09-04 |
 | Ветка | `claude/monik-implementation` |
-| Последний завершённый этап | **S20 — Application wiring, startup, shutdown, recovery** |
-| Следующий этап | **S21 — Integration tests (сквозные сценарии)** |
-| Статус разработки | ▶ идёт автономная разработка по DEVELOPMENT_PLAN.md |
-| Тесты | 2890 passed |
+| Последний завершённый этап | **S25 — Deployment, документация, финальный отчёт** |
+| Следующий этап | — все этапы плана S0–S25 завершены |
+| Статус разработки | ✅ план S0–S25 выполнен; остаётся live-проверка API (решение D-3) |
+| Тесты | 5122 passed |
 | Проверки | ruff ✅ · ruff format ✅ · mypy --strict ✅ · pytest ✅ |
 
 ---
@@ -750,6 +750,48 @@ graceful shutdown.
 
 ---
 
+### S21–S24 — Тесты: сквозные сценарии, crash-recovery, архитектура, безопасность, нагрузка ✅
+
+- **S21** (`tests/e2e/test_scenarios.py`) — прибыльная возможность
+  end-to-end, несколько сумм с общим маршрутом, убыточный кандидат,
+  таймаут провайдера (`PARTIAL`), rate limit ≠ убыточность,
+  `ROUTE_UNAVAILABLE`, просроченная возможность, дедупликация, доставка и
+  её отказ без изменения `CONFIRMED`, кнопка `об`;
+- **S22** (`tests/e2e/test_crash_recovery.py`) — крах после создания
+  Opportunity, во время выполнения Job (`RUNNING` не становится успехом),
+  после сохранения snapshot, во время доставки; отсутствие дублей,
+  идемпотентность восстановления, новая попытка того же `#K`;
+- **S23** (`tests/architecture/test_layering.py`,
+  `tests/security/test_security_regression.py`) — направление
+  зависимостей, чтение окружения в одном месте, изоляция HTTP и SQLite,
+  отсутствие ветвлений по агрегатору в core, отсутствие циклических
+  импортов, запрет `Decimal(float)`; SSRF, параметризованный SQL,
+  отсутствие секретов в репозитории, traversal, неотключаемый TLS;
+- **S24** (`tests/performance/`) — лимит конкурентности под нагрузкой,
+  лимит возможностей на цикл, backpressure и переполнение очереди Level 2,
+  `max_parallel`, отсутствие неограниченного роста состояния, retention.
+
+---
+
+### S25 — Deployment, документация, финальный отчёт ✅
+
+- `scripts/init_db.py`, `scripts/backup_db.py`, `scripts/restore_db.py` —
+  инициализация, online-backup с проверкой копии и восстановление
+  (существующая база не перезаписывается без `--force`); покрыты
+  интеграционными тестами;
+- `docs/OPERATING.md` — руководство по запуску, конфигурации, секретам,
+  резервному копированию, тестам и Telegram;
+- `docs/FINAL_REPORT.md` — финальный отчёт по `CLAUDE.md` §53 с явным
+  разделением production / mock / нереализованного;
+- `config/config.example.yaml` финализирован; `docs/architecture/` не
+  изменялся.
+
+**Итоговые проверки:** `pytest -m "not external"` ✅ **5122 passed** ·
+`ruff` ✅ · `ruff format` ✅ · `mypy --strict` ✅ (218 модулей) ·
+`git diff docs/architecture` — пусто.
+
+---
+
 ## GIT COMMITS
 
 | Этап | Commit | Описание |
@@ -797,6 +839,8 @@ graceful shutdown.
 | S19 | `a8fff3d` | `feat: add structured observability, metrics and correlation context` |
 | S19 | `b1d4bef` | `docs: update development status after stages S16-S19` |
 | S20 | `55a63f2` | `feat: wire application lifecycle with startup, recovery and graceful shutdown` |
+| S21–S23 | `117d8b8` | `test: add end-to-end, crash-recovery, architecture and security suites` |
+| S24 | `2ad9f3c` | `test: add performance and resource-limit checks` |
 
 ---
 
@@ -831,11 +875,11 @@ graceful shutdown.
 | S18 | Health Monitoring + Supervisor | ✅ |
 | S19 | Observability | ✅ |
 | S20 | App wiring, startup, recovery, shutdown | ✅ |
-| S21 | Integration / E2E тесты | 🔜 следующий |
-| S22 | Recovery / crash тесты | ⬜ |
-| S23 | Architecture + security тесты | ⬜ |
-| S24 | Performance проверки | ⬜ |
-| S25 | Deployment, документация, финальный отчёт | ⬜ |
+| S21 | Integration / E2E тесты | ✅ |
+| S22 | Recovery / crash тесты | ✅ |
+| S23 | Architecture + security тесты | ✅ |
+| S24 | Performance проверки | ✅ |
+| S25 | Deployment, документация, финальный отчёт | ✅ |
 
 ---
 
@@ -859,15 +903,18 @@ Telegram API заблокированы egress-политикой; ключей 
 
 ## СЛЕДУЮЩИЙ ШАГ
 
-**S21 — Integration tests (сквозные сценарии)** согласно
-`DEVELOPMENT_PLAN.md` §5, затем S22 (recovery/crash), S23 (architecture +
-security), S24 (performance), S25 (deployment, документация, финальный
-отчёт).
+Все этапы плана **S0–S25 завершены**. Итог зафиксирован в
+`docs/FINAL_REPORT.md`, руководство по эксплуатации — в
+`docs/OPERATING.md`.
 
-Что нужно сделать на S21:
-- сквозные сценарии на детерминированных адаптерах: полный цикл поиска и
-  подтверждения; несколько сумм; частичное подтверждение; недоступный
-  провайдер; несовпадение маршрута; неизвестная комиссия;
-- параллельные циклы токенов и конкуренция Level 1 / Level 2 за ресурсы;
-- дедупликация Opportunity и Level 2 workflow в сквозном сценарии;
-- доставка уведомления и обработка команды на реальных репозиториях.
+Единственный внешний шаг, невозможный в текущей среде (нет сетевого
+доступа к провайдерам и Telegram, ключи не предоставлены — решения D-3
+и D-6):
+
+```bash
+uv run python scripts/verify_provider_api.py --config config/config.yaml
+```
+
+До его выполнения контракты провайдерских API и Telegram Bot API считаются
+**непроверенными вживую**; утверждать, что production API работает, нельзя
+(`CLAUDE.md` §10, §46).
