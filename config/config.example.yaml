@@ -187,6 +187,14 @@ scheduler:
       timezone: "Europe/Lisbon"
       interval_days: 1
 
+health:
+  enabled: true
+  check_interval_seconds: 60
+  provider_degraded_threshold: 2     # порог перехода в DEGRADED
+  provider_failure_threshold: 4      # порог перехода в UNAVAILABLE
+  provider_recovery_threshold: 2     # гистерезис: порог восстановления
+  worker_restart_limit: 3
+
 notifications:
   enabled: false
   mode: A                         # A | B — влияет только на правила отправки

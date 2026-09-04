@@ -13,6 +13,7 @@ from monik.domain.enums.health import (
     AdapterState,
     ApplicationHealthStatus,
     ProviderHealthStatus,
+    SupervisorState,
 )
 from monik.domain.enums.lifecycle import (
     AmountConfirmationStatus,
@@ -68,6 +69,7 @@ __all__ = [
     "OverlapPolicy",
     "ProviderHealthStatus",
     "ProviderId",
+    "SupervisorState",
     "QuoteStatus",
     "RequestPriority",
     "ResourceResultStatus",

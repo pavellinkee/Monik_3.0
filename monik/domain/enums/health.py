@@ -38,3 +38,18 @@ class AdapterState(DomainEnum):
     DISABLED = "disabled"
     FAILED = "failed"
     SHUTTING_DOWN = "shutting_down"
+
+
+class SupervisorState(DomainEnum):
+    """Состояние Supervisor (``42_ARCHITECTURE_MAP.md``).
+
+    ``SAFE_STOP`` — реакция на критическую ошибку persistence
+    (``CLAUDE.md`` §34): система прекращает работу, а не продолжает с
+    недостоверным состоянием.
+    """
+
+    STARTING = "starting"
+    RUNNING = "running"
+    DEGRADED = "degraded"
+    SAFE_STOP = "safe_stop"
+    STOPPED = "stopped"
