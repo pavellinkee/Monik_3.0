@@ -12,10 +12,10 @@
 |---|---|
 | Дата обновления | 2026-09-04 |
 | Ветка | `claude/monik-implementation` |
-| Последний завершённый этап | **S2 — Errors, Clock, structured logging + redaction** |
-| Следующий этап | **S3 — Configuration subsystem** |
+| Последний завершённый этап | **S3 — Configuration subsystem** |
+| Следующий этап | **S4 — SQLite, schema, migrations, transactions** |
 | Статус разработки | ▶ идёт автономная разработка по DEVELOPMENT_PLAN.md |
-| Тесты | 566 passed |
+| Тесты | 649 passed |
 | Проверки | ruff ✅ · ruff format ✅ · mypy --strict ✅ · pytest ✅ |
 
 ---
@@ -150,6 +150,39 @@ Security-тесты (`tests/security/`) подтверждают, что сек�
 
 ---
 
+### S3 — Configuration subsystem ✅
+
+**Реализовано (`monik/config/`):**
+- секции: `application` (environment, IANA timezone), `networks`, `providers`,
+  `tokens`, `routes` (политика пар провайдеров), `scanner` (level1/level2),
+  `profitability`, `fees`, `gas`, `prices`, `resources` (retry, circuit
+  breaker), `scheduler`, `notifications.telegram`, `database` (retention),
+  `logging`, `metrics`;
+- loader: YAML → env overrides (`MONIK__SECTION__FIELD`) → defaults →
+  validation → immutable `Configuration` с детерминированным `version`;
+  приоритет: env override > файл > безопасный default;
+- секреты: `SecretRef` (`{env: "MONIK_..."}`), `SecretResolver` —
+  единственное место, читающее `os.environ`; `SecretValue` не раскрывает
+  значение в `repr`/`str`; `SecretStore` хранится **отдельно** от модели,
+  поэтому дамп и fingerprint конфигурации физически не содержат секретов;
+- `configuration_diagnostics` — безопасный снимок состояния;
+- полный `config/config.example.yaml` и `.env.example`.
+
+**Cross-subsystem валидация:** уникальность идентификаторов · tokens ↔
+networks · providers ↔ networks · routes ↔ providers · amounts ↔ token
+precision · базовая сеть и базовый токен · наличие торгуемой пары ·
+production-safety (нет DEBUG-логов, у enabled-провайдера есть credentials
+reference, integrity check включён).
+
+**Инварианты, которые нельзя отключить конфигурацией:** unknown fee/gas ≠ 0 ·
+Level 2 обязан подтверждать зафиксированный маршрут · `Retry-After`
+обязателен · foreign keys включены · неизвестный расход блокирует порог.
+
+**Тестирование:** `pytest` ✅ **649 passed**; `ruff` ✅ · `ruff format` ✅ ·
+`mypy --strict` ✅ (100 модулей).
+
+---
+
 ## GIT COMMITS
 
 | Этап | Commit | Описание |
@@ -161,6 +194,8 @@ Security-тесты (`tests/security/`) подтверждают, что сек�
 | S1 | `d434557` | `feat: add canonical domain models, enums and value objects` |
 | S1 | `bcd9a93` | `docs: update development status after stage S1` |
 | S2 | `316d14e` | `feat: add normalized error model, clock abstraction and redacting structured logger` |
+| S2 | `26a53e5` | `docs: update development status after stage S2` |
+| S3 | `d4f9803` | `feat: implement configuration loading, validation and secret references` |
 
 ---
 
@@ -173,8 +208,8 @@ Security-тесты (`tests/security/`) подтверждают, что сек�
 | S0 | Project foundation, tooling, CI | ✅ |
 | S1 | Domain models, enums, value objects | ✅ |
 | S2 | Errors, Clock, structured logging + redaction | ✅ |
-| S3 | Configuration subsystem | 🔜 следующий |
-| S4 | SQLite, schema, migrations, transactions | ⬜ |
+| S3 | Configuration subsystem | ✅ |
+| S4 | SQLite, schema, migrations, transactions | 🔜 следующий |
 | S5 | Repositories | ⬜ |
 | S6 | Token/Network/Provider/Capability registries | ⬜ |
 | S7 | HTTP infrastructure (TLS, SSRF, limits) | ⬜ |
@@ -223,30 +258,38 @@ Telegram API заблокированы egress-политикой; ключей 
 
 ## СЛЕДУЮЩИЙ ШАГ
 
-**S3 — Configuration subsystem** согласно `DEVELOPMENT_PLAN.md` §5.
+**S4 — Database: соединение, схема, migrations, транзакции** согласно
+`DEVELOPMENT_PLAN.md` §5.
 
-Что нужно сделать (документацию перечитывать не требуется — контракты
-зафиксированы ниже):
-- pydantic-схемы секций: `application`, `networks`, `providers`, `tokens`,
-  `routes`, `scanner.level1`, `scanner.level2`, `profitability`, `fees`,
-  `gas`, `prices`, `resources`, `scheduler`, `notifications.telegram`,
-  `database`, `logging`, `metrics`;
-- loader: YAML → env overrides → defaults → validation → normalization →
-  immutable `Configuration` + детерминированный `config_version`;
-- разрешение секрет-ссылок `{env: "MONIK_..."}` с регистрацией значений
-  в `SecretRegistry` (уже готов в S2);
-- cross-field и cross-subsystem валидация: enabled provider ↔ enabled network,
-  tokens ↔ networks, routes ↔ tokens/providers, amounts ↔ token precision,
-  минимум по одной enabled network / provider / token / amount;
-- валидация `HH:MM`, IANA timezone, Decimal-сумм, диапазонов, enum;
-- diagnostics-представление с `[REDACTED]`;
-- финализировать `config/config.example.yaml` и `.env.example`.
+Что нужно сделать:
+- `monik/infrastructure/db/`: connection manager на `aiosqlite` (WAL,
+  `foreign_keys=ON`, busy timeout, ограниченный retry на `SQLITE_BUSY`,
+  integrity check при старте);
+- `TransactionManager` (begin/commit/rollback), транзакция никогда не
+  оборачивает внешний вызов;
+- migration runner + таблица `schema_migrations`, последовательные атомарные
+  миграции; ошибка миграции прерывает старт;
+- migration `0001_initial` с таблицами:
+  `schema_migrations`, `app_metadata`, `scans`,
+  `opportunities`, `opportunity_amounts`,
+  `level2_jobs`, `level2_attempts`, `level2_amount_results`,
+  `notifications`, `notification_attempts`,
+  `fee_snapshots`, `fee_records`, `gas_snapshots`, `capabilities`,
+  `scheduler_tasks`, `scheduler_executions`, `state_transitions`;
+- индексы и UNIQUE-ограничения, включая `UNIQUE(opportunity_id,
+  destination_id)` для notifications и индекс на `opportunities.fingerprint`.
 
-Дефолты, которые обязана поддерживать конфигурация:
-scan interval 300 с · overlap SKIP · threshold 1.00 % net ROI (сравнение `>=`) ·
-top 30 tokens · `level2.max_parallel` 20 · retry `max_attempts` 3 ·
-maintenance startup + daily (`interval_days`, `time`, `timezone`).
+Важно при проектировании схемы (уже зафиксировано, документацию перечитывать
+не нужно):
+- Decimal хранится как TEXT, raw base units — как INTEGER; float не
+  используется нигде;
+- все timestamps — UTC;
+- секреты в БД не хранятся;
+- полная история quotes не сохраняется, у каждой исторической таблицы есть
+  retention;
+- `Opportunity` — сущность Level 1 (`#V`), `Level2Job` — `#K`;
+  `Candidate` не персистится.
 
-Обязательные тесты этапа: невалидная конфигурация останавливает старт;
-секреты не появляются в diagnostics и в текстах ошибок; env override работает;
-Decimal не приводится к float; reload откатывается к последней валидной версии.
+Обязательные тесты этапа: создание БД с нуля, применение всех migrations,
+идемпотентность повторного запуска, наличие индексов/constraints/FK, откат
+транзакции, поведение при busy, тесты никогда не используют production-путь БД.
