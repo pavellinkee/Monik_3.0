@@ -17,6 +17,7 @@ import monik
 
 PACKAGE_ROOT = pathlib.Path(next(iter(monik.__path__)))
 NOTIFICATIONS_ROOT = PACKAGE_ROOT / "services" / "notifications"
+COMMANDS_ROOT = PACKAGE_ROOT / "services" / "commands"
 TELEGRAM_ROOT = PACKAGE_ROOT / "infrastructure" / "telegram"
 
 #: Notification System не должна знать сканер, адаптеры котировок и БД.
@@ -40,6 +41,7 @@ def _python_files(root: pathlib.Path) -> list[pathlib.Path]:
 
 
 NOTIFICATION_FILES = _python_files(NOTIFICATIONS_ROOT)
+COMMAND_FILES = _python_files(COMMANDS_ROOT)
 TELEGRAM_FILES = _python_files(TELEGRAM_ROOT)
 
 
@@ -127,3 +129,34 @@ def test_no_hardcoded_destination(path: pathlib.Path) -> None:
     """Chat ID и язык не зашиты в код (§51-53)."""
     source = path.read_text(encoding="utf-8")
     assert "-100" not in source, f"{path.name} looks like it hard-codes a chat id"
+
+
+@pytest.mark.parametrize("path", COMMAND_FILES, ids=lambda p: p.name)
+def test_command_handlers_never_reach_providers(path: pathlib.Path) -> None:
+    """Обработчик команды не инициирует provider-запрос (``CLAUDE.md`` §35).
+
+    Данные читаются только из репозиториев и уже собранных снимков, поэтому
+    подсистема команд не знает ни адаптеров котировок, ни сканеров.
+    """
+    forbidden = (
+        "httpx",
+        "requests",
+        "aiohttp",
+        "urllib",
+        "monik.infrastructure.http",
+        "monik.infrastructure.providers",
+        "monik.services.level1",
+        "monik.services.level2.scanner",
+        "monik.services.level2.routes",
+        "monik.services.calculator",
+        "monik.services.resources",
+    )
+    for module in _imports(path):
+        for item in forbidden:
+            assert module != item and not module.startswith(f"{item}."), (
+                f"{path.name} imports {module}: commands must read stored data only"
+            )
+
+
+def test_command_files_exist() -> None:
+    assert COMMAND_FILES, "telegram command handling must be implemented"

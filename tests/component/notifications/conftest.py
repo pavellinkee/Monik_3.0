@@ -11,11 +11,13 @@ import pytest
 from monik.config import Configuration, parse_configuration
 from monik.config.sections.database import DatabaseConfig
 from monik.domain.enums.notifications import DestinationKind, NotificationMode
+from monik.domain.enums.providers import ProviderId
 from monik.domain.models.confirmation import ConfirmationSnapshot
 from monik.domain.models.job import ConfirmationResult
 from monik.domain.models.notification import NotificationDestination
 from monik.domain.models.opportunity import Opportunity
 from monik.infrastructure.db import Database, MigrationRunner
+from monik.infrastructure.providers.fake import FakeAdapter
 from monik.infrastructure.telegram import FakeTransport
 from monik.repositories.sqlite import (
     SqliteConfirmationRepository,
@@ -100,6 +102,7 @@ class NotificationHarness:
     opportunities: SqliteOpportunityRepository
     formatter: MessageFormatter
     clock: FakeClock
+    adapters: dict[ProviderId, FakeAdapter]
 
 
 async def build_notifications(
@@ -147,4 +150,5 @@ async def build_notifications(
         opportunities=SqliteOpportunityRepository(database),
         formatter=formatter,
         clock=clock,
+        adapters=level2.adapters,
     )

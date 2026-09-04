@@ -14,6 +14,7 @@ import pytest
 from monik.config.secrets import SecretRef, SecretResolver, SecretValue
 from monik.config.sections.notifications import TelegramConfig
 from monik.domain.enums.notifications import DeliveryErrorKind, DestinationKind
+from monik.domain.errors import DataError
 from monik.domain.models.notification import NotificationDestination
 from monik.infrastructure.http import FakeHttpClient, HttpRequest, HttpResponse
 from monik.infrastructure.telegram import (
@@ -21,6 +22,7 @@ from monik.infrastructure.telegram import (
     TelegramNotificationAdapter,
     bot_path,
 )
+from monik.infrastructure.telegram.polling import TelegramUpdateSource
 from monik.services.notifications import OutgoingMessage
 from monik.services.observability import FakeClock
 from tests import factories as f
@@ -45,6 +47,21 @@ def message(**overrides: Any) -> OutgoingMessage:
     }
     base.update(overrides)
     return OutgoingMessage(**base)
+
+
+def build_update_source(http: FakeHttpClient, clock: FakeClock) -> TelegramUpdateSource:
+    config = TelegramConfig(
+        enabled=True,
+        bot_token=SecretRef(env="MONIK_TELEGRAM_BOT_TOKEN"),
+        chat_id=SecretRef(env="MONIK_TELEGRAM_CHAT_ID"),
+    )
+    return TelegramUpdateSource(
+        config,
+        http=http,
+        resources=resource_manager(clock),
+        clock=clock,
+        bot_token=secret(BOT_TOKEN, "MONIK_TELEGRAM_BOT_TOKEN"),
+    )
 
 
 def build_adapter(
@@ -187,3 +204,64 @@ async def test_message_without_button_is_still_sent(clock: FakeClock) -> None:
     await adapter.send(message(details_callback=None, details_label=None))
 
     assert "reply_markup" not in captured[0].json_body
+
+
+# --- входящий канал -------------------------------------------------------
+
+
+async def test_updates_are_normalized(clock: FakeClock) -> None:
+    """``getUpdates`` превращается в нормализованные обновления."""
+    payload = {
+        "ok": True,
+        "result": [
+            {
+                "update_id": 11,
+                "message": {"chat": {"id": -100123}, "text": "/status"},
+            },
+            {
+                "update_id": 12,
+                "callback_query": {
+                    "id": "cb-9",
+                    "data": "details:abc",
+                    "message": {"chat": {"id": -100123}},
+                },
+            },
+        ],
+    }
+    http = FakeHttpClient(
+        handler=lambda request: HttpResponse(status_code=200, text=json.dumps(payload))
+    )
+    source = build_update_source(http, clock)
+
+    updates = await source.fetch(offset=None)
+
+    assert [update.update_id for update in updates] == [11, 12]
+    assert updates[0].is_command and updates[0].text == "/status"
+    assert updates[1].is_callback and updates[1].callback_data == "details:abc"
+    assert updates[1].callback_query_id == "cb-9"
+    assert updates[0].chat_id == "-100123"
+
+
+async def test_offset_is_sent_to_the_api(clock: FakeClock) -> None:
+    """Offset передаётся в запрос, чтобы не получать обработанные обновления."""
+    captured: list[HttpRequest] = []
+
+    def handler(request: HttpRequest) -> HttpResponse:
+        captured.append(request)
+        return HttpResponse(status_code=200, text='{"ok": true, "result": []}')
+
+    source = build_update_source(FakeHttpClient(handler=handler), clock)
+    await source.fetch(offset=42)
+
+    assert captured[0].json_body["offset"] == 42
+
+
+async def test_malformed_updates_are_rejected(clock: FakeClock) -> None:
+    """Некорректный ответ — ошибка данных, а не молчаливая потеря обновлений."""
+    http = FakeHttpClient(
+        handler=lambda request: HttpResponse(status_code=200, text='{"ok": false}')
+    )
+    source = build_update_source(http, clock)
+
+    with pytest.raises(DataError):
+        await source.fetch(offset=None)

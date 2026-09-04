@@ -11,6 +11,7 @@ from monik.repositories.sqlite.confirmations import (
 )
 from monik.repositories.sqlite.fees import SqliteFeeRepository, SqliteGasRepository
 from monik.repositories.sqlite.jobs import SqliteJobRepository
+from monik.repositories.sqlite.metadata import SqliteMetadataRepository
 from monik.repositories.sqlite.notifications import SqliteNotificationRepository
 from monik.repositories.sqlite.opportunities import SqliteOpportunityRepository
 from monik.repositories.sqlite.scans import SqliteScanRepository
@@ -41,6 +42,7 @@ __all__ = [
     "SqliteGasRepository",
     "SqliteIdSequenceRepository",
     "SqliteJobRepository",
+    "SqliteMetadataRepository",
     "SqliteNotificationRepository",
     "SqliteOpportunityRepository",
     "SqliteScanRepository",
