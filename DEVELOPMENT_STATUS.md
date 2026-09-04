@@ -12,10 +12,10 @@
 |---|---|
 | Дата обновления | 2026-09-04 |
 | Ветка | `claude/monik-implementation` |
-| Последний завершённый этап | **S8 — Resource Manager** |
-| Следующий этап | **S9.0 — Adapter contract + contract test suite + FakeAdapter** |
+| Последний завершённый этап | **S9.1 — 1inch adapter** |
+| Следующий этап | **S9.2 — 0x adapter** |
 | Статус разработки | ▶ идёт автономная разработка по DEVELOPMENT_PLAN.md |
-| Тесты | 1427 passed |
+| Тесты | 1520 passed |
 | Проверки | ruff ✅ · ruff format ✅ · mypy --strict ✅ · pytest ✅ |
 
 ---
@@ -325,6 +325,37 @@ Security-тесты: заголовок авторизации и API-ключ �
 
 ---
 
+### S9.0 — Контракт адаптеров ✅
+
+`AggregatorAdapter` protocol · `QuoteRequest` с проверкой согласованности ·
+`RouteValidation` (`REPRODUCED` / `MISMATCH` / `UNSUPPORTED`) ·
+`AdapterCapabilities` и `AdapterHealth` · модуль нормализации (разбор raw
+amounts без float, отказ подставлять ноль, сборка маршрута и котировки с
+проверкой провайдера, сети, операции и токенов) · `FakeAdapter` —
+**test implementation** · `tests/contract/adapter_contract.py` — общий набор
+требований, который обязан пройти каждый адаптер.
+
+---
+
+### S9.1 — 1inch adapter ✅
+
+⚠️ **API contract NOT verified against live endpoint** (решение D-3).
+
+- `endpoints.py` — базовый URL, версия API, chain id, пути
+  quote / tokens / liquidity-sources; все provider-specific детали в одном
+  файле;
+- `HttpProviderAdapter` — общая основа HTTP-адаптеров: запрос через
+  Resource Manager, credentials, нормализация статусов;
+- `OneInchAdapter` — построение запроса, разбор `dstAmount` и `gas` без
+  float, нормализация маршрута из `protocols` с устойчивым отпечатком,
+  честное объявление отсутствия fixed-route поддержки, сравнение отпечатков
+  для Level 2, `discover_fees` без выдуманных нулей, health check.
+
+**Тестирование:** `pytest` ✅ **1520 passed**; `ruff` ✅ · `ruff format` ✅ ·
+`mypy --strict` ✅ (145 модулей).
+
+---
+
 ## GIT COMMITS
 
 | Этап | Commit | Описание |
@@ -349,6 +380,9 @@ Security-тесты: заголовок авторизации и API-ключ �
 | S7 | `03b8997` | `feat: add controlled async http client with ssrf and tls safeguards` |
 | S7 | `b687649` | `docs: update development status after stage S7` |
 | S8 | `ccca655` | `feat: implement resource manager with priorities, rate limits, retry and circuit breaker` |
+| S8 | `cd8facf` | `docs: update development status after stage S8` |
+| S9.0 | `a835438` | `feat: add aggregator adapter contract and shared contract test suite` |
+| S9.1 | `f0d62fc` | `feat: implement 1inch adapter` |
 
 ---
 
@@ -367,9 +401,9 @@ Security-тесты: заголовок авторизации и API-ключ �
 | S6 | Token/Network/Provider/Capability registries | ✅ |
 | S7 | HTTP infrastructure (TLS, SSRF, limits) | ✅ |
 | S8 | Resource Manager | ✅ |
-| S9.0 | Adapter contract + contract test suite + FakeAdapter | 🔜 следующий |
-| S9.1 | 1inch adapter | ⬜ |
-| S9.2 | 0x adapter | ⬜ |
+| S9.0 | Adapter contract + contract test suite + FakeAdapter | ✅ |
+| S9.1 | 1inch adapter | ✅ |
+| S9.2 | 0x adapter | 🔜 следующий |
 | S9.3 | Velora adapter | ⬜ |
 | S9.4 | Uniswap adapter | ⬜ |
 | S10 | Fee System, Gas System, conversion | ⬜ |
@@ -411,26 +445,24 @@ Telegram API заблокированы egress-политикой; ключей 
 
 ## СЛЕДУЮЩИЙ ШАГ
 
-**S9.0 — Общий контракт Aggregator Adapter** согласно `DEVELOPMENT_PLAN.md` §5.
+**S9.2 — адаптер 0x**, затем **S9.3 — Velora (ParaSwap)** и
+**S9.4 — Uniswap**.
 
-Что нужно сделать:
-- protocol `AggregatorAdapter`: `get_quote(request)`,
-  `validate_fixed_route(...)`, `discover_capabilities()`,
-  `discover_fees()`, `health_check()`, lifecycle
-  (`initialize/ready/degraded/shutdown`), `supported_networks`,
-  `routing_modes`;
-- нормализация: `Quote`, `Route`/`RouteStep`, `route_fingerprint`,
-  извлечение комиссий (`UNKNOWN`, не 0), gas, перевод ошибок провайдера
-  в категории `Temporary/Permanent/Data/Authentication/RateLimit/Unsupported`;
-- **общий contract test suite**, который обязан пройти каждый adapter;
-- `FakeAdapter` — детерминированная **test implementation** для
-  integration/E2E, явно помеченная как не production.
+Шаблон уже задан адаптером 1inch — повторить структуру:
+- `endpoints.py` с базовым URL, версией, идентификаторами сетей и путями;
+  пометка `API contract NOT verified against live endpoint`;
+- класс адаптера на основе `HttpProviderAdapter`;
+- разбор ответа через `monik.infrastructure.providers.normalization`;
+- `tests/unit/providers/test_<provider>_adapter.py` (запрос, разбор,
+  ошибки, fixed-route, discovery) и
+  `tests/contract/test_<provider>_contract.py` с прогоном общего
+  contract suite.
 
-Все внешние вызовы адаптеров обязаны идти через `ResourceManager`
-(готов в S8) и `HttpClient` (готов в S7). Provider-specific код —
-только внутри каталога соответствующего адаптера.
-
-Далее подэтапы S9.1–S9.4: адаптеры 1inch, 0x, Velora, Uniswap.
-Каждый — отдельный commit; endpoints/params/auth локализованы в одном
-`endpoints.py` внутри адаптера; в docstring и финальном отчёте —
-пометка `API contract NOT verified against live endpoint` (решение D-3).
+Особенности, которые нужно учесть:
+- **0x**: Swap API, заголовок с ключом, ответ с `buyAmount`/`sellAmount`,
+  источники ликвидности в `sources`/`route`.
+- **Velora (ParaSwap)**: двухшаговая модель `prices` → `transactions`;
+  для котировки достаточно `prices`; маршрут описан вложенной структурой.
+- **Uniswap**: обязательно сохранять различие routing modes
+  (`CLASSIC` против `UniswapX Dutch/Priority`) — объединять их запрещено;
+  соответствующие значения уже есть в `RoutingMode`.
