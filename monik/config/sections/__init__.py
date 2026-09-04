@@ -1,6 +1,7 @@
 """Секции конфигурации Monik."""
 
 from monik.config.sections.application import ApplicationConfig, Environment
+from monik.config.sections.capabilities import CapabilityConfig
 from monik.config.sections.database import DatabaseConfig, RetentionConfig
 from monik.config.sections.fees import (
     FeeConfig,
@@ -26,6 +27,7 @@ from monik.config.sections.tokens import TokenConfig
 
 __all__ = [
     "ApplicationConfig",
+    "CapabilityConfig",
     "CircuitBreakerConfig",
     "DatabaseConfig",
     "Environment",

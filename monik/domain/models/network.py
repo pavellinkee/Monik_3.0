@@ -22,5 +22,8 @@ class Network(DomainModel):
     chain_id: int = Field(gt=0)
     native_token_symbol: TokenSymbol
     native_token_decimals: int = Field(ge=0, le=36)
-    wrapped_native_address: TokenAddress | None = None
+    # Обёрнутый native token обязателен: он нужен для конвертации стоимости
+    # gas в валюту расчёта, а native asset нельзя идентифицировать по символу
+    # (36_DATA_MODELS.md §11).
+    wrapped_native_address: TokenAddress
     enabled: bool = True

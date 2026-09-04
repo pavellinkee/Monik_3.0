@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict
 
@@ -27,7 +27,7 @@ class DomainModel(BaseModel):
         arbitrary_types_allowed=False,
     )
 
-    def replace(self, **changes: Any) -> Any:
+    def replace(self, **changes: Any) -> Self:
         """Вернуть копию модели с изменёнными полями.
 
         Валидация выполняется повторно, поэтому нарушить инварианты модели

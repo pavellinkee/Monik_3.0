@@ -15,6 +15,7 @@ from pydantic import Field, model_validator
 from monik.config.base import ConfigSection
 from monik.config.sections import (
     ApplicationConfig,
+    CapabilityConfig,
     DatabaseConfig,
     FeeConfig,
     GasConfig,
@@ -55,6 +56,7 @@ class Configuration(ConfigSection):
     routes: RoutePolicyConfig = RoutePolicyConfig()
     scanner: ScannerConfig
     profitability: ProfitabilityConfig = ProfitabilityConfig()
+    capabilities: CapabilityConfig = CapabilityConfig()
     fees: FeeConfig = FeeConfig()
     gas: GasConfig = GasConfig()
     prices: PriceConfig = PriceConfig()
