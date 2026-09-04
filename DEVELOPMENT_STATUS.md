@@ -12,10 +12,10 @@
 |---|---|
 | Дата обновления | 2026-09-04 |
 | Ветка | `claude/monik-implementation` |
-| Последний завершённый этап | **S10 — Fee System, Gas System, Prices/Conversion** |
-| Следующий этап | **S11 — Profit Calculator** |
+| Последний завершённый этап | **S12 — Level 1 Scanner** |
+| Следующий этап | **S13 — Level 2 Scanner** |
 | Статус разработки | ▶ идёт автономная разработка по DEVELOPMENT_PLAN.md |
-| Тесты | 1730 passed |
+| Тесты | 2310 passed |
 | Проверки | ruff ✅ · ruff format ✅ · mypy --strict ✅ · pytest ✅ |
 
 ---
@@ -452,6 +452,94 @@ Manager проходят также не-агрегаторные владель
 
 ---
 
+### S11 — Profit Calculator ✅
+
+**Единственный владелец финансовых формул Monik** (`09 §2, §30`): Level 1,
+Level 2, Telegram и история собственных формул не содержат.
+
+**Реализовано (`monik/services/calculator/`):**
+- `precision.py` — фиксированный decimal-контекст (`prec=50`,
+  `ROUND_HALF_EVEN`, ловушки арифметических сбоев). Результат не зависит от
+  process-wide контекста, поэтому расчёт детерминирован (`09 §49, §71`);
+  промежуточные значения не округляются (`09 §39-40`);
+- `conversion.py` — `RateBook`: курс выбирается строго по заданному
+  направлению (`09 §38`) и только свежий (`09 §36`); совпадающие валюты
+  курса не требуют (`09 §34`); отсутствие курса даёт `None`, а не
+  выдуманное значение (`09 §37`);
+- `costs.py` — `CostBreakdown` из комиссий и gas: rebate отдельным
+  компонентом (`09 §15`), `included_in_quote` исключает двойной учёт
+  (`09 §44-46`), неизвестный или просроченный расход попадает в
+  `unknown_components` и никогда не заменяется нулём (`09 §16, §63`);
+- `threshold.py` — сравнение `>=` (`09 §26`); неизвестный расход, влияющий
+  на метрику, не позволяет считать порог пройденным (`09 §27`);
+- `profit.py` — `ProfitCalculator.calculate()`: gross/net profit и ROI,
+  статусы `COMPLETE/PARTIAL/INVALID/UNKNOWN`, versioned formula.
+  Противоречивые данные дают `INVALID` с явной причиной, а не молчаливое
+  исправление (`09 §20, §73`).
+
+**Доменные модели:** `Gas.inclusion` (gas, уже учтённый в исходном
+значении, повторно не вычитается — `09 §46`); `ProfitResult.invalid_reason`
+(причина `INVALID` фиксируется явно — `09 §73`).
+
+**Тестирование:** `pytest` ✅ **2120 passed**; `ruff` ✅ · `ruff format` ✅ ·
+`mypy --strict` ✅.
+
+Architecture-тесты: финансовая арифметика и сравнение порога прибыльности
+существуют **только** в модуле Calculator; сам Calculator не выполняет I/O
+(`09 §74-76`).
+
+---
+
+### S12 — Level 1 Scanner ✅
+
+**Реализовано (`monik/services/level1/`, 12 модулей):**
+- `ports.py` — узкие протоколы окружения (Fee System, gas, курсы,
+  хранилища, приёмник Level 2): Scanner не знает их реализаций;
+- `scope.py` — границы цикла целиком из конфигурации и реестров
+  (`02 §5, §68`); списки сетей, токенов, сумм и провайдеров в коде не зашиты;
+- `filters.py` — capability-фильтрация **до** отправки запроса
+  (`10 §15`, `02 §76`); `UNKNOWN` не приравнивается к `UNSUPPORTED` и
+  допускает runtime-проверку, если это разрешено конфигурацией (`10 §16`);
+- `validation.py` — провайдер, сеть, токены, сумма, статус, нулевой output
+  и свежесть; невалидная котировка в сравнении не участвует (`10 §41`);
+- `quotes.py` — запросы только через Adapter (а тот — через Resource
+  Manager), ограниченная конкурентность (`02 §60`), диагностика каждой
+  попытки;
+- `cycle.py` — **самодостаточный цикл одного токена**: MAX BUY определяется
+  после получения набора BUY-ответов, затем немедленно запускается SELL,
+  не дожидаясь BUY других токенов (`CLAUDE.md §16`, `10 §75`);
+- `preliminary.py` — сборка входа расчёта (комиссии обеих ног, gas
+  round-trip, курс native token) и вызов `ProfitCalculator`; собственной
+  формулы нет (`10 §46`);
+- `grouping.py` — суммы объединяются в одну Opportunity только при
+  совпадении пары провайдеров и обоих маршрутов: **один маршрут на все
+  суммы** (`10 §24, §54, §89`);
+- `ranking.py` / `dedup.py` — детерминированное ранжирование при нехватке
+  ёмкости (`02 §49-50`) и дедупликация по отпечатку в окне (`02 §44`);
+- `handoff.py` — **атомарное** создание Opportunity + Level 2 Job и
+  немедленная передача (`CLAUDE.md §29`, `02 §46`);
+- `scanner.py` — оркестрация: параллельные независимые токены, общий
+  таймаут, изоляция ошибок, backpressure, статусы
+  `COMPLETE/PARTIAL/FAILED/CANCELLED`.
+
+Отпечаток Opportunity вынесен в функцию `opportunity_fingerprint`: значение
+для дедупликации до создания и хранимое значение вычисляются одним кодом.
+
+**Тестирование:** `pytest` ✅ **2310 passed**; `ruff` ✅ · `ruff format` ✅ ·
+`mypy --strict` ✅ (176 модулей).
+
+Component-тесты цикла: фильтрация token/provider/capability, несколько сумм,
+один маршрут на все суммы, порог, неизвестные fee/gas/курс, дедупликация и
+её окно, backpressure, лимит на цикл, изоляция ошибок провайдера, rate
+limit, нулевой output, устаревшая котировка, отмена, expiration.
+Отдельно проверено: **SELL токена A не ждёт BUY токена B**, ограниченная
+конкурентность и детерминизм результата.
+Architecture-тесты: Level 1 не обходит Adapter/Resource Manager, не
+отправляет уведомления, не создаёт собственный таймер и не зашивает
+параметры сканирования.
+
+---
+
 ## GIT COMMITS
 
 | Этап | Commit | Описание |
@@ -485,6 +573,9 @@ Manager проходят также не-агрегаторные владель
 | S9.4 | `66311ff` | `feat: implement uniswap adapter and provider api verification script` |
 | S9.4 | `75c5e75` | `docs: update development status after stages S9.2-S9.4` |
 | S10 | `425e1fc` | `feat: implement fee system, gas providers and price conversion` |
+| S10 | `ddf4b6f` | `docs: update development status after stage S10` |
+| S11 | `cee04fc` | `feat: implement deterministic profit calculator with decimal arithmetic` |
+| S12 | `0536965` | `feat: implement level 1 scanner with independent per-token buy/sell cycles` |
 
 ---
 
@@ -509,9 +600,9 @@ Manager проходят также не-агрегаторные владель
 | S9.3 | Velora adapter | ✅ |
 | S9.4 | Uniswap adapter | ✅ |
 | S10 | Fee System, Gas System, conversion | ✅ |
-| S11 | Profit Calculator | 🔜 следующий |
-| S12 | Level 1 Scanner | ⬜ |
-| S13 | Level 2 Scanner | ⬜ |
+| S11 | Profit Calculator | ✅ |
+| S12 | Level 1 Scanner | ✅ |
+| S13 | Level 2 Scanner | 🔜 следующий |
 | S14 | Opportunity Service | ⬜ |
 | S15 | Notification System + Telegram delivery + кнопка `об` | ⬜ |
 | S16 | Telegram commands | ⬜ |
@@ -547,22 +638,28 @@ Telegram API заблокированы egress-политикой; ключей 
 
 ## СЛЕДУЮЩИЙ ШАГ
 
-**S11 — Profit Calculator** согласно `DEVELOPMENT_PLAN.md` §5.
+**S13 — Level 2 Scanner** согласно `DEVELOPMENT_PLAN.md` §5.
 
-Что нужно сделать (`monik/services/calculator/`):
-- `ProfitCalculator.calculate(ProfitCalculationInput) -> ProfitResult` —
-  **чистая функция**: без HTTP, БД, Telegram и Scheduler;
-- формулы (`09 §9-14`): `gross_profit = final_output − input_amount`;
-  `gross_roi = gross_profit / input_amount × 100`;
-  `total_costs = total_fees + gas_cost + other_costs − rebates`;
-  `net_profit = gross_profit − total_costs`;
-  `net_roi = net_profit / input × 100`;
-- статусы результата `COMPLETE / PARTIAL / INVALID / UNKNOWN`;
-- threshold: метрика `net_roi`, сравнение `>=`; **если неизвестный расход
-  способен изменить результат относительно порога — порог не считается
-  пройденным**;
-- предотвращение двойного учёта через `included_in_quote`;
-- покомпонентный breakdown, `profit_formula_version = 1`, детерминизм.
+Ключевое правило этапа: **Level 2 проверяет именно тот маршрут, который
+зафиксировал Level 1** (`11 §5`, `10 §31`). Он не ищет новый маршрут, не
+выбирает другой пул и не меняет routing mode; невозможность воспроизвести
+маршрут — это `ROUTE_UNAVAILABLE`, а не `UNPROFITABLE`.
 
-**DoD:** ни одной финансовой формулы вне этого модуля (architecture-тест).
-**Commit:** `feat: implement deterministic profit calculator with decimal arithmetic`
+Что нужно сделать (`monik/services/level2/`):
+- воркер Job: `QUEUED → RUNNING → {CONFIRMED, REJECTED, FAILED, EXPIRED,
+  CANCELLED}`; `max_parallel` по умолчанию 20 и никогда не превышается
+  (`CLAUDE.md` §18); логические Job отделены от resource locks;
+- дедупликация одинаковых workflow (`CLAUDE.md` §19);
+- свежие BUY-котировки по фиксированному маршруту через
+  `validate_fixed_route`; **SELL считается от текущего BUY output**, а не от
+  значения Level 1 (`11 §16-17`);
+- комиссии, gas и conversion для каждой суммы отдельно; расчёт через
+  `ProfitCalculator`; статусы подтверждения `CONFIRMED/UNCONFIRMED/PARTIAL`
+  (`CLAUDE.md` §26) и confirmation rate без `PARTIAL` (`CLAUDE.md` §27);
+- прерванная попытка после аварии становится `INTERRUPTED`, старые
+  котировки свежими не считаются (`CLAUDE.md` §30).
+
+Готово для этапа: `Level2Job`/`Level2Attempt`/`AmountVerificationResult`/
+`ConfirmationResult`, `SqliteJobRepository`, `RouteValidation` во всех
+четырёх адаптерах, `ProfitCalculator`, Fee/Gas/Conversion, Resource Manager
+с приоритетом `LEVEL2` и дедупликацией, порт `Level2Dispatcher` из Level 1.
