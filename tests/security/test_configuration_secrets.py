@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import pathlib
 from typing import Any
 
 import pytest
@@ -105,3 +106,15 @@ def test_diagnostics_redact_secret_leaked_into_plain_field(
     assert ONEINCH_SECRET not in rendered
     assert loaded.config.scanner.base_token_address == USDT_ADDRESS.lower()
     assert REDACTED not in loaded.config.version
+
+
+def test_tests_never_target_production_database_path(repo_root: Any) -> None:
+    """Тесты используют только временные базы (30 §91-92)."""
+    forbidden = ("data/" + "monik.db", "/var/lib/" + "monik")
+    this_file = pathlib.Path(__file__).resolve()
+    for path in (repo_root / "tests").rglob("*.py"):
+        if path.resolve() == this_file:
+            continue
+        source = path.read_text(encoding="utf-8")
+        for marker in forbidden:
+            assert marker not in source, f"{path.name} references production database {marker}"
