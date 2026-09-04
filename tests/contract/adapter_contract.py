@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import replace
 
 import pytest
 
@@ -103,8 +104,14 @@ class AdapterContractTests(ABC):
         assert str(quote.request_id) == str(request.request_id)
 
     async def test_fixed_route_validation_reports_outcome(self, adapter: AggregatorAdapter) -> None:
-        """Молча подменять маршрут запрещено (06 §52)."""
-        validation = await adapter.validate_fixed_route(self.buy_request())
+        """Молча подменять маршрут запрещено (06 §52).
+
+        Level 2 всегда передаёт маршрут, зафиксированный Level 1, поэтому
+        contract-проверка использует именно такой запрос.
+        """
+        fixed = await adapter.get_quote(self.buy_request())
+        request = replace(self.buy_request(), fixed_route=fixed.route)
+        validation = await adapter.validate_fixed_route(request)
         assert isinstance(validation.outcome, RouteValidationOutcome)
         if validation.outcome is RouteValidationOutcome.REPRODUCED:
             assert validation.quote is not None

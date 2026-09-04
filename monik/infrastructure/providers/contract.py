@@ -13,6 +13,7 @@ Adapter не принимает бизнес-решений (``06_AGGREGATOR_ADA
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Protocol, runtime_checkable
 
 from monik.domain.enums.health import AdapterState
@@ -22,6 +23,7 @@ from monik.domain.enums.operations import (
     RoutingMode,
 )
 from monik.domain.enums.providers import ProviderId
+from monik.domain.enums.resources import RequestPriority
 from monik.domain.models.fee import Fee
 from monik.domain.models.quote import Quote
 from monik.domain.models.route import Route
@@ -62,6 +64,10 @@ class QuoteRequest:
     fixed_route: Route | None = None
     slippage_bps: int | None = None
     correlation_id: CorrelationId | None = None
+    # Приоритет передаётся Resource Manager: Level 2 обслуживается раньше
+    # Level 1 (``CLAUDE.md`` §15).
+    priority: RequestPriority = RequestPriority.LEVEL1_BUY
+    timeout: timedelta | None = None
 
     def __post_init__(self) -> None:
         if self.input_token.network_id != self.network_id:
