@@ -4,22 +4,41 @@
 за пределами этого пакета и ``monik.infrastructure.db``.
 """
 
+from monik.repositories.sqlite.capabilities import SqliteCapabilityRepository
+from monik.repositories.sqlite.fees import SqliteFeeRepository, SqliteGasRepository
 from monik.repositories.sqlite.jobs import SqliteJobRepository
+from monik.repositories.sqlite.notifications import SqliteNotificationRepository
 from monik.repositories.sqlite.opportunities import SqliteOpportunityRepository
 from monik.repositories.sqlite.scans import SqliteScanRepository
+from monik.repositories.sqlite.scheduler import (
+    SchedulerTaskState,
+    SqliteSchedulerRepository,
+)
 from monik.repositories.sqlite.sequences import (
     JOB_SEQUENCE,
     NOTIFICATION_SEQUENCE,
     OPPORTUNITY_SEQUENCE,
     SqliteIdSequenceRepository,
 )
+from monik.repositories.sqlite.state_transitions import (
+    SqliteStateTransitionRepository,
+    StateTransitionRecord,
+)
 
 __all__ = [
     "JOB_SEQUENCE",
     "NOTIFICATION_SEQUENCE",
     "OPPORTUNITY_SEQUENCE",
+    "SchedulerTaskState",
+    "SqliteCapabilityRepository",
+    "SqliteFeeRepository",
+    "SqliteGasRepository",
     "SqliteIdSequenceRepository",
     "SqliteJobRepository",
+    "SqliteNotificationRepository",
     "SqliteOpportunityRepository",
     "SqliteScanRepository",
+    "SqliteSchedulerRepository",
+    "SqliteStateTransitionRepository",
+    "StateTransitionRecord",
 ]
