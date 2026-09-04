@@ -12,12 +12,11 @@
 |---|---|
 | Дата обновления | 2026-09-04 |
 | Ветка | `claude/monik-implementation` |
-| Последний завершённый этап | **нет** (реализация не начиналась) |
-| Текущий этап | **S-A: Аудит и планирование — ЗАВЕРШЁН** |
-| Следующий этап | **S0 — Project Foundation** |
-| Статус разработки | ⏸ **ОЖИДАНИЕ КОМАНДЫ ПОЛЬЗОВАТЕЛЯ «ПОЕХАЛИ»** |
-| Строк production-кода | 0 |
-| Тестов | 0 |
+| Последний завершённый этап | **S0 — Project Foundation** |
+| Следующий этап | **S1 — Domain: enums, value objects, models** |
+| Статус разработки | ▶ идёт автономная разработка по DEVELOPMENT_PLAN.md |
+| Тесты | 37 passed |
+| Проверки | ruff ✅ · ruff format ✅ · mypy --strict ✅ · pytest ✅ |
 
 ---
 
@@ -46,7 +45,39 @@
 
 **Тестирование:** не проводилось (кода нет).
 
-**Commits:** см. следующий раздел.
+---
+
+### S-B — Фиксация архитектурных решений ✅
+
+Пользователь принял решения D-1…D-6; они внесены в `DEVELOPMENT_PLAN.md` §9
+и распространены на §2 (модели, потоки, state machines), §5 (этапы S4, S5, S10,
+S12, S13, S14) и §8 (риски Р-2, Р-3).
+
+Ключевое: **`Opportunity` — официальное имя сущности Level 1 (`#V`)**,
+`Candidate` — промежуточный value object до прохождения проверок (не персистится).
+
+---
+
+### S0 — Project Foundation ✅
+
+**Реализовано:**
+- структура пакета `monik/` по `25_PROJECT_STRUCTURE.md` (app, config, domain,
+  services, repositories, infrastructure с провайдерами) — 35 модулей, каждый
+  с описанием своей ответственности;
+- `tests/` с семью уровнями (unit, component, contract, integration,
+  architecture, security, e2e);
+- `pyproject.toml`: runtime-зависимости (httpx, pydantic, PyYAML, aiosqlite),
+  hatch wheel target, console script `monik`, маркер `external`;
+- `uv.lock` — воспроизводимая установка через `uv sync --group dev`;
+- `Makefile` (install / lint / format / typecheck / test / check-architecture-docs / ci);
+- GitHub Actions CI: ruff → ruff format --check → mypy --strict → pytest;
+- `conftest.py`, `config/config.example.yaml`, `.env.example`, `scripts/README.md`.
+
+**Тестирование:** `ruff check` ✅ · `ruff format --check` ✅ ·
+`mypy --strict` ✅ (35 модулей) · `pytest` ✅ **37 passed**.
+
+**Проверено фактически:** `uv sync --group dev` устанавливает pytest 8.4.2 и
+pytest-asyncio 0.26.0 в соответствии с пинами `pyproject.toml`.
 
 ---
 
@@ -54,7 +85,9 @@
 
 | Этап | Commit | Описание |
 |---|---|---|
-| S-A | (текущий) | `docs: add development plan and status tracking` |
+| S-A | `ae34f99` | `docs: add development plan and status tracking` |
+| S-B | `d8d2f64` | `docs: fix accepted architectural decisions D-1..D-6 in development plan` |
+| S0 | `5b58af8` | `chore: bootstrap project structure, tooling and CI` |
 
 ---
 
@@ -64,8 +97,8 @@
 
 | Этап | Модуль | Статус |
 |---|---|---|
-| S0 | Project foundation, tooling, CI | ⬜ |
-| S1 | Domain models, enums, value objects | ⬜ |
+| S0 | Project foundation, tooling, CI | ✅ |
+| S1 | Domain models, enums, value objects | 🔜 следующий |
 | S2 | Errors, Clock, structured logging + redaction | ⬜ |
 | S3 | Configuration subsystem | ⬜ |
 | S4 | SQLite, schema, migrations, transactions | ⬜ |
@@ -99,17 +132,31 @@
 
 ## ОТКРЫТЫЕ ПРОБЛЕМЫ И ОГРАНИЧЕНИЯ
 
-| # | Проблема | Статус |
+| # | Вопрос | Статус |
 |---|---|---|
-| D-1 | Конфликт наименования `Candidate` / `Opportunity` между документами 10/11 и 02/30/35/36 | ⏳ **ожидает решения пользователя** (предложение в `DEVELOPMENT_PLAN.md` §9) |
-| D-2 | Telegram-команды и кнопка `об` есть в `CLAUDE.md`, но не в `15_NOTIFICATION_SYSTEM` | ⏳ предложена трактовка как расширение |
-| D-3 | Live-верификация провайдерских API невозможна (egress заблокирован, ключей нет) | ⏳ предложен обходной путь + скрипт верификации |
-| D-4 | Не зафиксирован источник gas и conversion rate | ⏳ предложен default |
-| D-5 | Идентичность Velora (ребрендинг ParaSwap) | ⏳ предложен `provider_id = "velora"` |
+| D-1 | Наименование сущности Level 1 | ✅ решено: `Opportunity` (`#V`); `Candidate` — промежуточный value object |
+| D-2 | Telegram-команды и кнопка `об` | ✅ решено: входящий канал Notification-подсистемы |
+| D-3 | Live-верификация провайдерских API | ✅ решено: адаптеры без live-проверки + `scripts/verify_provider_api.py` |
+| D-4 | Источник gas и conversion rate | ✅ решено: `GasPriceProvider` / `TokenPriceProvider` как независимые абстракции |
+| D-5 | Идентичность Velora | ✅ решено: `provider_id = "velora"` |
+| D-6 | API-ключи и Telegram token | ✅ решено: только через environment variables, добавляются после разработки |
+
+**Действующие ограничения среды:** провайдерские API, их doc-сайты, RPC и
+Telegram API заблокированы egress-политикой; ключей нет. Все адаптеры и
+внешние интеграции разрабатываются и тестируются на mocks/fakes и будут помечены
+как непроверенные вживую.
 
 ---
 
 ## СЛЕДУЮЩИЙ ШАГ
 
-После команды пользователя **«ПОЕХАЛИ»**:
-начать **S0 — Project Foundation** согласно `DEVELOPMENT_PLAN.md` §5.
+**S1 — Domain: enums, value objects, models** согласно `DEVELOPMENT_PLAN.md` §5.
+
+Ключевое для S1 (уже зафиксировано, документацию перечитывать не требуется):
+- `Opportunity` — сущность Level 1 с `#V`-ID, единый lifecycle
+  `CREATED → VERIFYING → {CONFIRMED, PARTIAL, UNPROFITABLE, ROUTE_UNAVAILABLE,
+  EXPIRED, FAILED, CANCELLED} → {NOTIFIED, NOTIFIED_PARTIAL, NOTIFIED_FAILED}`;
+- `Level2Job` — `#K`-ID, отдельное пространство идентификаторов;
+- `Candidate` — промежуточный value object Level 1, не персистится;
+- `int` для raw base units, `Decimal` для денег и процентов, `float` запрещён;
+- все timestamps — timezone-aware UTC.
