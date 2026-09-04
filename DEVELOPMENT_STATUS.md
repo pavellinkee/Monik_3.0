@@ -12,10 +12,10 @@
 |---|---|
 | Дата обновления | 2026-09-04 |
 | Ветка | `claude/monik-implementation` |
-| Последний завершённый этап | **S3 — Configuration subsystem** |
-| Следующий этап | **S4 — SQLite, schema, migrations, transactions** |
+| Последний завершённый этап | **S4 — SQLite, schema, migrations, transactions** |
+| Следующий этап | **S5 — Repositories** |
 | Статус разработки | ▶ идёт автономная разработка по DEVELOPMENT_PLAN.md |
-| Тесты | 649 passed |
+| Тесты | 997 passed |
 | Проверки | ruff ✅ · ruff format ✅ · mypy --strict ✅ · pytest ✅ |
 
 ---
@@ -183,6 +183,41 @@ Level 2 обязан подтверждать зафиксированный м�
 
 ---
 
+### S4 — Database: соединение, схема, migrations, транзакции ✅
+
+**Реализовано (`monik/infrastructure/db/`):**
+- `Database` — соединение `aiosqlite` с обязательными PRAGMA (WAL,
+  `foreign_keys=ON`, busy timeout, `synchronous=FULL`), integrity check,
+  ограниченный retry при блокировке, сериализация записей одним локом;
+- `Transaction` — обёртка, переводящая исключения драйвера в `DatabaseError`;
+- `TransactionManager` — границы атомарных операций;
+- `MigrationRunner` — последовательное применение миграций, каждая в одной
+  транзакции; `schema_migrations`; отказ при неизвестной версии схемы;
+- `types` — `Decimal` и raw amounts хранятся как `TEXT` (raw amount токена
+  с 18 decimals превышает диапазон `INTEGER` SQLite), timestamps — ISO-8601 UTC.
+
+**Миграция 0001 — 18 таблиц:** `app_metadata`, `id_sequences`, `scans`,
+`opportunities`, `opportunity_amounts`, `level2_jobs`, `level2_attempts`,
+`level2_amount_results`, `notifications`, `notification_attempts`,
+`fee_snapshots`, `fee_records`, `gas_snapshots`, `capabilities`,
+`scheduler_tasks`, `scheduler_executions`, `state_transitions`,
+`schema_migrations`.
+
+**Ограничения схемы:** `UNIQUE(opportunity_id)` на `level2_jobs` (дедупликация
+Level 2 workflow) · `UNIQUE(opportunity_id, destination_id)` на
+`notifications` (идемпотентность доставки) · `UNIQUE v_id` · `RESTRICT` на
+удаление opportunity с уведомлениями · `SET NULL` при удалении scan ·
+`CASCADE` только внутри агрегата.
+
+**Тестирование:** `pytest` ✅ **997 passed**; `ruff` ✅ · `ruff format` ✅ ·
+`mypy --strict` ✅ (107 модулей).
+
+Architecture-тесты: драйвер SQLite и raw SQL не используются вне db-слоя,
+транзакция не оборачивает внешний вызов, в схеме нет `REAL`-колонок и колонок
+для секретов. Security-тест: тесты не обращаются к production-пути БД.
+
+---
+
 ## GIT COMMITS
 
 | Этап | Commit | Описание |
@@ -196,6 +231,8 @@ Level 2 обязан подтверждать зафиксированный м�
 | S2 | `316d14e` | `feat: add normalized error model, clock abstraction and redacting structured logger` |
 | S2 | `26a53e5` | `docs: update development status after stage S2` |
 | S3 | `d4f9803` | `feat: implement configuration loading, validation and secret references` |
+| S3 | `93b2df1` | `docs: update development status after stage S3` |
+| S4 | `0660ba8` | `feat: add sqlite infrastructure, schema migrations and transaction manager` |
 
 ---
 
@@ -209,8 +246,8 @@ Level 2 обязан подтверждать зафиксированный м�
 | S1 | Domain models, enums, value objects | ✅ |
 | S2 | Errors, Clock, structured logging + redaction | ✅ |
 | S3 | Configuration subsystem | ✅ |
-| S4 | SQLite, schema, migrations, transactions | 🔜 следующий |
-| S5 | Repositories | ⬜ |
+| S4 | SQLite, schema, migrations, transactions | ✅ |
+| S5 | Repositories | 🔜 следующий |
 | S6 | Token/Network/Provider/Capability registries | ⬜ |
 | S7 | HTTP infrastructure (TLS, SSRF, limits) | ⬜ |
 | S8 | Resource Manager | ⬜ |
@@ -258,38 +295,27 @@ Telegram API заблокированы egress-политикой; ключей 
 
 ## СЛЕДУЮЩИЙ ШАГ
 
-**S4 — Database: соединение, схема, migrations, транзакции** согласно
-`DEVELOPMENT_PLAN.md` §5.
+**S5 — Repositories** согласно `DEVELOPMENT_PLAN.md` §5.
 
 Что нужно сделать:
-- `monik/infrastructure/db/`: connection manager на `aiosqlite` (WAL,
-  `foreign_keys=ON`, busy timeout, ограниченный retry на `SQLITE_BUSY`,
-  integrity check при старте);
-- `TransactionManager` (begin/commit/rollback), транзакция никогда не
-  оборачивает внешний вызов;
-- migration runner + таблица `schema_migrations`, последовательные атомарные
-  миграции; ошибка миграции прерывает старт;
-- migration `0001_initial` с таблицами:
-  `schema_migrations`, `app_metadata`, `scans`,
-  `opportunities`, `opportunity_amounts`,
-  `level2_jobs`, `level2_attempts`, `level2_amount_results`,
-  `notifications`, `notification_attempts`,
-  `fee_snapshots`, `fee_records`, `gas_snapshots`, `capabilities`,
-  `scheduler_tasks`, `scheduler_executions`, `state_transitions`;
-- индексы и UNIQUE-ограничения, включая `UNIQUE(opportunity_id,
-  destination_id)` для notifications и индекс на `opportunities.fingerprint`.
+- интерфейсы (Protocol) в `monik/repositories/interfaces/` и реализации в
+  `monik/repositories/sqlite/`: `ScanRepository`, `OpportunityRepository`,
+  `JobRepository`, `NotificationRepository`, `FeeRepository`,
+  `GasRepository`, `CapabilityRepository`, `SchedulerRepository`,
+  `StateTransitionRepository`, `IdSequenceRepository` (выдача `#V`/`#K`
+  и sequence уведомлений);
+- mapping domain ↔ database через `monik.infrastructure.db.types`
+  (Decimal и raw amounts — TEXT, timestamps — ISO-8601 UTC);
+- атомарная операция `create_opportunity_with_job()` — Opportunity +
+  amount-контексты + Level2Job в одной транзакции (CLAUDE.md §29);
+- recovery-запросы: активные и зависшие jobs (`RUNNING` после краха),
+  pending notifications, истёкшие opportunities.
 
-Важно при проектировании схемы (уже зафиксировано, документацию перечитывать
-не нужно):
-- Decimal хранится как TEXT, raw base units — как INTEGER; float не
-  используется нигде;
-- все timestamps — UTC;
-- секреты в БД не хранятся;
-- полная история quotes не сохраняется, у каждой исторической таблицы есть
-  retention;
-- `Opportunity` — сущность Level 1 (`#V`), `Level2Job` — `#K`;
-  `Candidate` не персистится.
+Схема уже создана в S4 — перечитывать документацию не требуется, достаточно
+`monik/infrastructure/db/migrations/m0001_initial.py`.
 
-Обязательные тесты этапа: создание БД с нуля, применение всех migrations,
-идемпотентность повторного запуска, наличие индексов/constraints/FK, откат
-транзакции, поведение при busy, тесты никогда не используют production-путь БД.
+Обязательные тесты этапа: CRUD каждого репозитория, фильтрация, pagination,
+дедупликация по fingerprint, enforcement UNIQUE, rollback, сохранение
+точности Decimal при round-trip, атомарность `opportunity + amounts + job`,
+recovery-запросы. Architecture-тест уже гарантирует, что SQL остаётся только
+в `repositories/sqlite` и `infrastructure/db`.
