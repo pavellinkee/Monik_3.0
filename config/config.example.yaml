@@ -1,0 +1,41 @@
+# Monik — пример конфигурации.
+#
+# ВНИМАНИЕ: реальные секреты в этот файл не помещаются никогда.
+# Credentials задаются ссылками на environment variables ({ env: "MONIK_..." })
+# и читаются только Configuration subsystem (17_CONFIGURATION.md §5, §26, §46).
+#
+# Полная схема реализуется на этапе S3 плана. Этот файл — заготовка структуры;
+# он будет дополнен и провалидирован вместе с loader'ом.
+
+application:
+  environment: development   # development | production
+  timezone: "Europe/Lisbon"
+
+networks:
+  polygon:
+    enabled: true
+    chain_id: 137
+    native_token: MATIC
+
+providers:
+  oneinch:
+    enabled: false
+    api_key: { env: "MONIK_ONEINCH_API_KEY" }
+  zero_x:
+    enabled: false
+    api_key: { env: "MONIK_ZEROX_API_KEY" }
+  velora:
+    enabled: false
+    api_key: { env: "MONIK_VELORA_API_KEY" }
+  uniswap:
+    enabled: false
+    api_key: { env: "MONIK_UNISWAP_API_KEY" }
+
+notifications:
+  telegram:
+    enabled: false
+    bot_token: { env: "MONIK_TELEGRAM_BOT_TOKEN" }
+    chat_id: { env: "MONIK_TELEGRAM_CHAT_ID" }
+
+database:
+  path: "data/monik.db"

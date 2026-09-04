@@ -8,6 +8,15 @@ version = "0.1.0"
 description = "DEX arbitrage scanner"
 requires-python = ">=3.12"
 readme = "README.md"
+dependencies = [
+    "httpx>=0.27,<1",
+    "pydantic>=2.9,<3",
+    "PyYAML>=6,<7",
+    "aiosqlite>=0.20,<1",
+]
+
+[project.scripts]
+monik = "monik.app.main:run"
 
 [dependency-groups]
 dev = [
@@ -15,7 +24,11 @@ dev = [
     "pytest-asyncio>=0.24,<1",
     "ruff>=0.9,<1",
     "mypy>=1.13,<2",
+    "types-PyYAML>=6,<7",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["monik"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -25,6 +38,9 @@ addopts = [
     "--strict-markers",
 ]
 asyncio_mode = "auto"
+markers = [
+    "external: tests that require real external network access (skipped by default)",
+]
 
 [tool.ruff]
 line-length = 100

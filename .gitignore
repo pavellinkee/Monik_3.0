@@ -76,3 +76,6 @@ generated/
 
 # Claude / AI local state
 .claude/
+
+# uv / project venv
+.venv/
